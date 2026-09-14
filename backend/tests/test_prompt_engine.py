@@ -33,3 +33,21 @@ def test_strip_markdown_for_voice_removes_spoken_formatting_markers():
     assert result == "You’re probably referring to the Founding Fathers.\n\nSee history and source."
     assert "**" not in result
     assert "`" not in result
+
+
+def test_strip_markdown_for_voice_preserves_unclosed_and_empty_link_edges():
+    assert strip_markdown_for_voice("[source](https://example.com)") == "source"
+    assert strip_markdown_for_voice("[](https://example.com)") == "[](https://example.com)"
+    assert strip_markdown_for_voice("[source]()") == "[source]()"
+    assert strip_markdown_for_voice("See [partial](https://example.com") == "See [partial](https://example.com"
+    assert strip_markdown_for_voice("**bold** and *italic*") == "bold and italic"
+    assert strip_markdown_for_voice("__bold__ and _italic_") == "bold and italic"
+    assert strip_markdown_for_voice("**unclosed") == "unclosed"
+    assert strip_markdown_for_voice("**line\nbreak**") == "line\nbreak"
+    assert strip_markdown_for_voice("***nested***") == "nested"
+
+
+def test_strip_markdown_for_voice_handles_pathological_emphasis_quickly():
+    payload = ("*" * 5000) + "text"
+    result = strip_markdown_for_voice(payload)
+    assert "text" in result

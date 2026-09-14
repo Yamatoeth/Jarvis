@@ -124,14 +124,68 @@ def build_messages(user_input: str, context: Optional[Dict[str, Any]] = None, ex
     return messages
 
 
+def _strip_markdown_links(text: str) -> str:
+    """Replace [label](url) with label using linear scans (no backtracking)."""
+    pieces: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        open_bracket = text.find("[", index)
+        if open_bracket == -1:
+            pieces.append(text[index:])
+            break
+        pieces.append(text[index:open_bracket])
+        close_bracket = text.find("]", open_bracket + 1)
+        if (
+            close_bracket == -1
+            or close_bracket + 1 >= length
+            or text[close_bracket + 1] != "("
+        ):
+            pieces.append(text[open_bracket])
+            index = open_bracket + 1
+            continue
+        close_paren = text.find(")", close_bracket + 2)
+        label = text[open_bracket + 1 : close_bracket]
+        url = text[close_bracket + 2 : close_paren] if close_paren != -1 else ""
+        if close_paren == -1 or not label or not url:
+            pieces.append(text[open_bracket])
+            index = open_bracket + 1
+            continue
+        pieces.append(label)
+        index = close_paren + 1
+    return "".join(pieces)
+
+
+def _unwrap_delimiter(text: str, marker: str) -> str:
+    """Strip paired markdown markers, matching the first closer (linear)."""
+    pieces: list[str] = []
+    index = 0
+    marker_len = len(marker)
+    while True:
+        open_idx = text.find(marker, index)
+        if open_idx == -1:
+            pieces.append(text[index:])
+            break
+        close_idx = text.find(marker, open_idx + marker_len)
+        if close_idx == -1:
+            pieces.append(text[index:])
+            break
+        pieces.append(text[index:open_idx])
+        pieces.append(text[open_idx + marker_len : close_idx])
+        index = close_idx + marker_len
+    return "".join(pieces)
+
+
 def strip_markdown_for_voice(text: str) -> str:
     """Remove common Markdown markers so TTS does not speak formatting symbols."""
     cleaned = text
-    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = _strip_markdown_links(cleaned)
     cleaned = re.sub(r"```[\s\S]*?```", lambda match: match.group(0).strip("`"), cleaned)
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
-    cleaned = re.sub(r"(\*\*|__)(.*?)\1", r"\2", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r"(\*|_)(.*?)\1", r"\2", cleaned, flags=re.DOTALL)
+    cleaned = _unwrap_delimiter(cleaned, "**")
+    cleaned = _unwrap_delimiter(cleaned, "__")
+    cleaned = _unwrap_delimiter(cleaned, "*")
+    cleaned = _unwrap_delimiter(cleaned, "_")
     cleaned = re.sub(r"^\s{0,3}#{1,6}\s+", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"^\s{0,3}>\s?", "", cleaned, flags=re.MULTILINE)
     cleaned = cleaned.replace("**", "").replace("__", "").replace("`", "")

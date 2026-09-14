@@ -25,6 +25,50 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+def _extract_json_array_payload(content: str) -> Optional[List[Dict[str, Any]]]:
+    """Extract a JSON array of objects from mixed LLM text without backtracking regex.
+
+    Mirrors ``[\\s*{.*}\\s*]`` with greedy ``.*``: first ``[`` followed by optional
+    whitespace and ``{``, then the last ``]`` preceded by optional whitespace and ``}``.
+    """
+    start = -1
+    index = 0
+    length = len(content)
+    while index < length:
+        if content[index] == "[":
+            cursor = index + 1
+            while cursor < length and content[cursor].isspace():
+                cursor += 1
+            if cursor < length and content[cursor] == "{":
+                start = index
+                break
+        index += 1
+    if start == -1:
+        return None
+
+    end = -1
+    index = length - 1
+    while index >= 0:
+        if content[index] == "]":
+            cursor = index - 1
+            while cursor >= 0 and content[cursor].isspace():
+                cursor -= 1
+            if cursor >= 0 and content[cursor] == "}":
+                end = index
+                break
+        index -= 1
+    if end <= start:
+        return None
+
+    try:
+        parsed = json.loads(content[start : end + 1])
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        logger.exception("Failed to parse JSON substring from LLM output")
+    return None
+
+
 def _rule_based_extract(transcript: str) -> List[Dict[str, Any]]:
     """Simple heuristic extractor: split into sentences and look for verb
     phrases that indicate personal facts. Returns low-confidence facts.
@@ -107,12 +151,9 @@ async def _llm_extract(transcript: str) -> Optional[List[Dict[str, Any]]]:
                     if isinstance(parsed.get(key), list):
                         return parsed[key]
         except json.JSONDecodeError:
-            match = re.search(r"(\[\s*\{.*\}\s*\])", content, re.S)
-            if match:
-                try:
-                    return json.loads(match.group(1))
-                except Exception:
-                    logger.exception("Failed to parse JSON substring from LLM output")
+            payload = _extract_json_array_payload(content)
+            if payload is not None:
+                return payload
         return None
     except Exception:
         logger.exception("LLM fact extraction failed")
