@@ -1,5 +1,6 @@
 # Core
-fastapi[all]==0.109.0
+fastapi[all]==0.118.3
+starlette==0.48.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.31
 slowapi==0.1.9
@@ -17,7 +18,7 @@ pinecone==8.0.0
 
 # LLM & Voice
 openai==1.10.0
-python-jose[cryptography]==3.4.0
+PyJWT==2.10.1
 passlib[bcrypt]==1.7.4
 celery[redis]==5.3.6
 deepgram-sdk==3.0.0
