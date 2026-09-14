@@ -16,9 +16,9 @@ class KokoroUnavailableError(RuntimeError):
 
 
 class KokoroTTSService:
-    def __init__(self) -> None:
+    def __init__(self, engine: Any | None = None) -> None:
         self._lock = Lock()
-        self._engine: Any | None = None
+        self._engine: Any | None = engine
 
     def _resolve_model_path(self) -> str:
         return settings.kokoro_model_path
@@ -30,6 +30,9 @@ class KokoroTTSService:
         return find_spec("kokoro_onnx") is not None and find_spec("soundfile") is not None
 
     def _ensure_engine(self) -> Any:
+        if self._engine is not None:
+            return self._engine
+
         try:
             from kokoro_onnx import Kokoro
         except ModuleNotFoundError as exc:
@@ -39,9 +42,6 @@ class KokoroTTSService:
                     "configure DEEPGRAM_API_KEY with TTS_PROVIDER=deepgram."
                 ) from exc
             raise
-
-        if self._engine is not None:
-            return self._engine
 
         with self._lock:
             if self._engine is None:

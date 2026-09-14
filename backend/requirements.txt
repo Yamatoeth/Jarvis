@@ -34,7 +34,7 @@ soundfile==0.13.1
 
 # Testing & Dev
 pytest==9.0.3
-pytest-asyncio==0.23.3
+pytest-asyncio==1.4.0
 pytest-cov==4.1.0
 mypy==1.8.0
 black==26.3.1
