@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import SimpleVoiceOrb from '../components/SimpleVoiceOrb'
+import { getRandomValues } from 'expo-crypto'
 import * as Haptics from 'expo-haptics'
 import { useFonts as useOrbitron, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
 import { useFonts as useRajdhani, Rajdhani_300Light, Rajdhani_500Medium } from '@expo-google-fonts/rajdhani'
@@ -82,8 +83,14 @@ type Props = {
   onNavigate?: (route: 'home' | 'profile' | 'history' | 'knowledge' | 'settings') => void
 }
 
-function createLocalUserId() {
-  return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+const LOCAL_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+export function createLocalUserId() {
+  const bytes = getRandomValues(new Uint8Array(6))
+  const suffix = Array.from(bytes, (byte) => LOCAL_ID_ALPHABET[byte % LOCAL_ID_ALPHABET.length] ?? '0').join(
+    '',
+  )
+  return `local-${Date.now().toString(36)}-${suffix}`
 }
 
 function formatTtsVoiceLabel(voice: string) {
