@@ -206,7 +206,8 @@ export function HistoryScreen({ onNavigate }: Props) {
                 </Text>
               </View>
             )}
-          </View>
+          </FlatList>
+          </>
         )}
 
         {selectedConv && messages.length > 0 && (
