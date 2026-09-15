@@ -426,6 +426,10 @@ export default {
   getWorkingMemory,
   getKnowledge,
   clearMessages,
+  // Onboarding
+  startOnboarding,
+  submitOnboardingAnswer,
+  getOnboardingSummary,
   // AI
   processQuery,
   synthesizeSpeech,

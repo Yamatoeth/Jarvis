@@ -5,12 +5,15 @@ import {
   StyleSheet,
   Platform,
   Pressable,
+  TouchableOpacity,
   Animated,
   Easing,
   Dimensions,
   TextInput,
   ActivityIndicator,
   ScrollView,
+  Modal,
+  FlatList,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -22,6 +25,7 @@ import { useFonts as useRajdhani, Rajdhani_300Light, Rajdhani_500Medium } from '
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant'
 import apiClient from '../services/apiClient'
 import { useSettingsStore } from '../store/settingsStore'
+import type { Conversation } from '../../shared/types'
 
 const { width: screenWidth } = Dimensions.get('window')
 const SPHERE_SIZE = Math.min(screenWidth * 0.88, 340)
@@ -116,6 +120,11 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
   const setUser = useSettingsStore((s) => s.setUser)
   const preferredTtsVoice = useSettingsStore((s) => s.settings.preferredTtsVoice)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
+  // HI4: conversation state
+  const activeConversationId = useSettingsStore((s) => s.activeConversationId)
+  const conversationList = useSettingsStore((s) => s.conversationList)
+  const setActiveConversationId = useSettingsStore((s) => s.setActiveConversationId)
+  const fetchConversations = useSettingsStore((s) => s.fetchConversations)
   const markBackendConnected = useCallback(() => {
     backendLastSeenAt.current = Date.now()
     setBackendStatus('connected')
@@ -217,10 +226,19 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
     if (isListening) {
       await stopListening()
     } else {
+      // HI4: ensure we have an active conversation before starting
+      if (!activeConversationId && userId) {
+        try {
+          const conv = await apiClient.createConversation(userId)
+          setActiveConversationId(conv.id)
+        } catch (e) {
+          console.warn('Failed to create conversation for voice session', e)
+        }
+      }
       await cancel()
       await startListening()
     }
-  }, [cancel, isBootstrapping, isListening, isProcessing, startListening, stopListening])
+  }, [cancel, isBootstrapping, isListening, isProcessing, startListening, stopListening, activeConversationId, userId, setActiveConversationId])
 
   const displayResponse = streamingResponse || response
   const statusLabel = useMemo(() => {
@@ -259,6 +277,39 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
     await sendText(trimmed)
   }, [draft, isBootstrapping, isProcessing, sendText])
 
+  // HI5: conversation selector state
+  const [showConvPicker, setShowConvPicker] = useState(false)
+  const isSessionActive = isListening || isProcessing || isSpeaking
+
+  const handleNewConversation = useCallback(async () => {
+    if (!userId) return
+    try {
+      const conv = await apiClient.createConversation(userId)
+      setActiveConversationId(conv.id)
+      setShowConvPicker(false)
+    } catch (e) {
+      console.warn('Failed to create conversation', e)
+    }
+  }, [userId, setActiveConversationId])
+
+  const handleSelectConversation = useCallback((id: string) => {
+    setActiveConversationId(id)
+    setShowConvPicker(false)
+  }, [setActiveConversationId])
+
+  const handleToggleConversationPicker = useCallback(() => {
+    setShowConvPicker((prev) => !prev)
+  }, [])
+
+  // Fetch conversations when userId is available
+  useEffect(() => {
+    let active = true
+    if (userId) {
+      void fetchConversations().catch(() => {})
+    }
+    return () => { active = false }
+  }, [userId, fetchConversations])
+
   if (!fontsLoaded) return null
 
   return (
@@ -266,6 +317,18 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
       <View style={styles.header}>
         <Text style={styles.logo}>JARVIS</Text>
         <View style={styles.headerRight}>
+          {/* HI5: conversation selector — hidden during active session */}
+          {!isSessionActive && (
+            <TouchableOpacity
+              onPress={handleToggleConversationPicker}
+              style={styles.iconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Select conversation"
+              accessibilityHint="Choose an active conversation"
+            >
+              <Ionicons name="chatbox-outline" size={28} color="#00d4ff" />
+            </TouchableOpacity>
+          )}
           <Pressable
             onPress={() => onNavigate?.('profile')}
             style={styles.iconButton}
@@ -459,6 +522,69 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
           </Pressable>
         </View>
       </View>
+
+      {/* HI5: Conversation picker modal */}
+      <Modal
+        visible={showConvPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={handleToggleConversationPicker}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Conversation</Text>
+              <TouchableOpacity
+                onPress={handleToggleConversationPicker}
+                style={styles.modalCloseButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close-outline" size={24} color="#00d4ff" />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={conversationList}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => handleSelectConversation(item.id)}
+                  style={styles.modalItem}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.id}. ${item.created_at}`}
+                >
+                  <View style={styles.modalItemLeft}>
+                    <View style={styles.modalItemDot} />
+                    <Text style={styles.modalItemText} numberOfLines={1}>
+                      {item.id.slice(0, 8)}...
+                    </Text>
+                  </View>
+                  <Text style={styles.modalItemDate}>
+                    {new Date(item.created_at).toLocaleDateString()}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={() => (
+                <Text style={styles.modalEmptyText}>
+                  No conversations yet.
+                </Text>
+              )}
+              ListFooterComponent={() => (
+                <TouchableOpacity
+                  onPress={handleNewConversation}
+                  style={styles.modalNewButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="New conversation"
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#00d4ff" />
+                  <Text style={styles.modalNewButtonText}>New conversation</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -717,5 +843,98 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.45,
+  },
+  // HI5: conversation picker modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 20,
+    backgroundColor: '#002832',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 212, 255, 0.2)',
+    padding: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 16,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  modalCloseButton: {
+    padding: 4,
+    margin: -4,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  modalItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  modalItemDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(0, 212, 255, 0.5)',
+  },
+  modalItemText: {
+    color: '#c9f7ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 15,
+    flex: 1,
+  },
+  modalItemDate: {
+    color: 'rgba(201, 247, 255, 0.55)',
+    fontFamily: 'Rajdhani_300Light',
+    fontSize: 12,
+    marginLeft: 8,
+  },
+  modalEmptyText: {
+    color: 'rgba(201, 247, 255, 0.5)',
+    fontFamily: 'Rajdhani_300Light',
+    fontSize: 15,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  modalNewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 212, 255, 0.3)',
+    backgroundColor: 'rgba(0, 212, 255, 0.08)',
+  },
+  modalNewButtonText: {
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 15,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
 })

@@ -18,7 +18,7 @@ import { Buffer } from 'buffer'
 
 import { audioRecordingService } from './audioRecording'
 import { audioPlaybackService } from './textToSpeech'
-import WSClient from './wsClient'
+import WSClient, { type WsMessage } from './wsClient'
 import apiClient from './apiClient'
 import { ApiError } from './apiClient'
 
@@ -453,7 +453,8 @@ export class VoicePipelineService {
         reject(error)
       }
 
-      const unsubscribe = ws.onMessage((message) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const unsubscribe = ws.onMessage((message: any) => {
         try {
           if (!this.isCurrentOperation(operationId)) {
             return
@@ -514,13 +515,15 @@ export class VoicePipelineService {
             case 'tts_audio_done':
               void finalize(options.playAudio !== false)
               break
-            case 'final_text':
-              if (typeof message.text === 'string') {
-                assistantResponse = message.text
+            case 'final_text': {
+              const ft = message as { type: string; text?: unknown }
+              if (typeof ft.text === 'string') {
+                assistantResponse = ft.text
                 this.callbacks.onResponse?.(assistantResponse)
               }
               void finalize(false)
               break
+            }
             case 'error':
               fail(new Error(typeof message.message === 'string' ? message.message : 'Voice backend error'))
               break

@@ -4,6 +4,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Conversation } from '../../shared/types';
+import apiClient from '../services/apiClient';
 
 interface UserSettings {
   // Notification preferences
@@ -21,14 +23,20 @@ interface SettingsState {
   userId: string | null;
   email: string | null;
   fullName: string | null;
-  
-  
+
   // Settings
   settings: UserSettings;
   // Onboarding
   hasCompletedOnboarding: boolean;
   hasGrantedMicrophonePermissions: boolean;
-  
+
+  // Conversation history (HI4)
+  activeConversationId: string | null;
+  conversationList: Conversation[];
+  setActiveConversationId: (id: string | null) => void;
+  setConversationList: (list: Conversation[]) => void;
+  fetchConversations: () => Promise<void>;
+
   // Actions
   setUser: (userId: string, email: string, fullName: string) => void;
   updateSettings: (settings: Partial<UserSettings>) => void;
@@ -52,6 +60,10 @@ const initialState = {
   settings: defaultSettings,
   hasCompletedOnboarding: false,
   hasGrantedMicrophonePermissions: false,
+
+  // Conversation history (HI4)
+  activeConversationId: null,
+  conversationList: [],
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -79,6 +91,29 @@ export const useSettingsStore = create<SettingsState>()(
 
       logout: () => {
         set(initialState);
+      },
+
+      // Conversation history (HI4)
+      setActiveConversationId: (id) => {
+        set({ activeConversationId: id });
+      },
+
+      setConversationList: (list) => {
+        set({ conversationList: list });
+      },
+
+      fetchConversations: async () => {
+        const uid = useSettingsStore.getState().userId;
+        if (!uid) {
+          set({ conversationList: [] });
+          return;
+        }
+        try {
+          const convs = await apiClient.getConversations(uid);
+          useSettingsStore.getState().setConversationList(convs);
+        } catch {
+          set({ conversationList: [] });
+        }
       },
     }),
     {
