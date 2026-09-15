@@ -6,7 +6,7 @@ import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { View } from 'react-native'
+import { View, ActivityIndicator } from 'react-native'
 import JarvisVoiceScreen from './src/components/JarvisVoiceScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
 import { ThemeProvider, useTheme } from './src/hooks/useTheme'
@@ -33,8 +33,8 @@ const Stack = createNativeStackNavigator<RootStackParamList>()
 
 function AppContent() {
   const { isDark } = useTheme()
-  const { hasSeenOnboarding, isLoading, completeOnboarding } = useOnboarding()
   const userId = useSettingsStore((state) => state.userId)
+  const { hasSeenOnboarding, onboardingInProgress, completeOnboarding } = useOnboarding(userId)
   
   const navigationTheme = isDark ? {
     ...DarkTheme,
@@ -78,8 +78,12 @@ function AppContent() {
     }
   }, [hasSeenOnboarding, userId])
 
-  if (isLoading) {
-    return null
+  if (onboardingInProgress) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#002832', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#00d4aa" />
+      </View>
+    )
   }
 
   if (!hasSeenOnboarding) {

@@ -8,7 +8,7 @@ import { useOnboarding } from '../hooks/useOnboarding'
 export function ProfileScreen({ onNavigate }: { onNavigate?: (route: 'home'|'profile') => void }) {
   const { isDark, themeMode, setThemeMode } = useTheme()
   const { clearHistory: clearChatHistory } = useChatHistory()
-  const { resetOnboarding } = useOnboarding()
+  const { resetOnboarding } = useOnboarding(undefined)
 
   const handleThemeChange = async () => {
     // Cycle through: system -> light -> dark -> system

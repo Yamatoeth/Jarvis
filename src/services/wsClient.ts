@@ -2,37 +2,30 @@
  * WebSocket client for voice hot-path
  * Connects to backend `/ws/voice/{userId}` and sends audio chunks (base64)
  * and receives streaming LLM/TTS messages.
+ *
+ * Protocol types are defined in wsProtocol.ts and MUST match
+ * the backend's app/core/ws_protocol.py.
  */
 import { getBackendWsUrl } from './backendUrl'
+import { WSMsg, type WsMessage } from './wsProtocol'
 
-/**
- * Discriminated union type for WebSocket messages from backend
- */
-export type WsMessage =
-  | { type: 'audio_chunk'; data: string }
-  | { type: 'final' }
-  | { type: 'llm_chunk'; data: string }
-  | { type: 'llm_done'; content: string }
-  | { type: 'tts_data'; data: string }
-  | { type: 'tts_done' }
-  | { type: 'error'; message: string }
-  | { type: 'closed'; code?: number; reason?: string; wasClean?: boolean }
-  | { type: 'raw'; data: string }
-  | { type: string; [key: string]: unknown }
+// ── Re-export protocol-aligned types ──────────────────────────────
 
-/**
- * Type guard for message type checking
- */
-export function isAudioChunkMessage(msg: WsMessage): msg is { type: 'audio_chunk'; data: string } {
-  return msg.type === 'audio_chunk' && typeof (msg as Record<string, unknown>).data === 'string'
+export { WsMessage }
+
+/** Type guard: audio chunk (base64) from TTS streaming */
+export function isTtsAudioChunkMessage(msg: WsMessage): msg is { type: typeof WSMsg.TTS_AUDIO_CHUNK; data: string } {
+  return msg.type === WSMsg.TTS_AUDIO_CHUNK && typeof (msg as Record<string, unknown>).data === 'string'
 }
 
-export function isLLMChunkMessage(msg: WsMessage): msg is { type: 'llm_chunk'; data: string } {
-  return msg.type === 'llm_chunk' && typeof (msg as Record<string, unknown>).data === 'string'
+/** Type guard: LLM stream chunk */
+export function isLLMChunkMessage(msg: WsMessage): msg is { type: typeof WSMsg.LLM_CHUNK; data: string } {
+  return msg.type === WSMsg.LLM_CHUNK && typeof (msg as Record<string, unknown>).data === 'string'
 }
 
-export function isErrorMessage(msg: WsMessage): msg is { type: 'error'; message: string } {
-  return msg.type === 'error' && typeof (msg as Record<string, unknown>).message === 'string'
+/** Type guard: error message */
+export function isErrorMessage(msg: WsMessage): msg is Extract<WsMessage, { type: typeof WSMsg.ERROR }> {
+  return msg.type === WSMsg.ERROR
 }
 
 type MessageHandler = (msg: WsMessage) => void

@@ -15,11 +15,17 @@ import {
   TtsVoicesResponseSchema,
   MemorySearchResponseSchema,
   ProcessQueryResponseSchema,
+  OnboardingStartSchema,
+  OnboardingAnswerSchema,
+  OnboardingSummarySchema,
   type HealthResponse,
   type TtsVoicesResponse,
   type MemorySearchResponse,
   type ProcessQueryResponse,
   type StatusResponse,
+  type OnboardingStartResponse,
+  type OnboardingAnswerResponse,
+  type OnboardingSummaryResponse,
 } from './validation'
 
 const API_BASE_URL = getBackendBaseUrl()
@@ -291,6 +297,59 @@ export async function getWorkingMemory(
   return request<Record<string, unknown>>(`/api/v1/memory/working/${userId}`, WorkingMemorySchema)
 }
 
+/** Get all knowledge base items for a user */
+export async function getKnowledge(userId: string) {
+  const KnowledgeItemSchema = z.object({
+    id: z.string(),
+    domain: z.enum(['identity', 'goals', 'projects', 'finances', 'relationships', 'patterns']),
+    field_name: z.string(),
+    field_value: z.string(),
+    confidence: z.number(),
+    source: z.string(),
+    last_updated: z.string(),
+  })
+  const ArraySchema = z.array(KnowledgeItemSchema)
+  return request<Array<z.infer<typeof KnowledgeItemSchema>>>(
+    `/api/v1/kb?user_id=${encodeURIComponent(userId)}`,
+    ArraySchema
+  )
+}
+
+/** Start an onboarding session */
+export async function startOnboarding(userId: string): Promise<OnboardingStartResponse> {
+  return request<OnboardingStartResponse>('/api/v1/onboarding/start', OnboardingStartSchema, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  })
+}
+
+/** Submit an answer in an onboarding session */
+export async function submitOnboardingAnswer(
+  userId: string,
+  sessionId: string,
+  answer: string
+): Promise<OnboardingAnswerResponse> {
+  return request<OnboardingAnswerResponse>(
+    `/api/v1/onboarding/${sessionId}/answer`,
+    OnboardingAnswerSchema,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, answer }),
+    }
+  )
+}
+
+/** Get onboarding session summary */
+export async function getOnboardingSummary(
+  userId: string,
+  sessionId: string
+): Promise<OnboardingSummaryResponse> {
+  return request<OnboardingSummaryResponse>(
+    `/api/v1/onboarding/${sessionId}/summary?user_id=${encodeURIComponent(userId)}`,
+    OnboardingSummarySchema
+  )
+}
+
 // ============================================
 // AI Processing
 // ============================================
@@ -326,6 +385,31 @@ export async function getTtsVoices(): Promise<TtsVoicesResponse> {
   return request<TtsVoicesResponse>('/api/v1/tts/voices', TtsVoicesResponseSchema)
 }
 
+/** Update a KB fact by id */
+export async function updateKnowledgeItem(kbId: string, userId: string, payload: Record<string, unknown>) {
+  return request(`/api/v1/kb/${kbId}?user_id=${encodeURIComponent(userId)}`, z.any(), {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+/** Delete a KB fact by id */
+export async function deleteKnowledgeItem(kbId: string, userId: string) {
+  return request(`/api/v1/kb/${kbId}?user_id=${encodeURIComponent(userId)}`, z.any(), {
+    method: 'DELETE',
+  })
+}
+
+/** Clear conversation history (Redis messages) for a user */
+export async function clearMessages(userId: string): Promise<{ status: string; user_id: string }> {
+  return request('/api/v1/memory/messages/' + encodeURIComponent(userId), z.object({
+    status: z.string(),
+    user_id: z.string(),
+  }), {
+    method: 'DELETE',
+  })
+}
+
 export async function get<T>(endpoint: string, schema: z.ZodSchema<T>): Promise<T> {
   return request<T>(endpoint, schema)
 }
@@ -346,19 +430,25 @@ export default {
   getStatus,
   // Users
   getOrCreateUser,
-  // (trust/biometrics removed)
   // Conversations
   createConversation,
   getConversation,
   getConversations,
   sendMessage,
   getMessages,
-  // (interventions removed)
   // Memory
   searchMemory,
   getWorkingMemory,
+  getKnowledge,
+  updateKnowledgeItem,
+  deleteKnowledgeItem,
+  clearMessages,
+  // Onboarding
+  startOnboarding,
+  submitOnboardingAnswer,
+  getOnboardingSummary,
   // AI
   processQuery,
   synthesizeSpeech,
   getTtsVoices,
-}
+};

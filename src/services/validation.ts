@@ -30,11 +30,12 @@ export const UserResponseSchema = z.object({
   id: z.string(),
   email: z.string(),
   fullName: z.string().optional(),
+  full_name: z.string().optional(),
   createdAt: z.string().optional(),
 }).transform((user) => ({
   id: user.id,
   email: user.email,
-  fullName: user.fullName ?? user.id,
+  fullName: user.fullName ?? user.full_name ?? user.id,
   createdAt: user.createdAt ?? new Date(0).toISOString(),
 }))
 export type UserResponse = z.infer<typeof UserResponseSchema>
@@ -120,6 +121,35 @@ export const ProcessQueryResponseSchema = z.object({
   memoryUpdated: z.boolean(),
 })
 export type ProcessQueryResponse = z.infer<typeof ProcessQueryResponseSchema>
+
+/**
+ * Onboarding session start response
+ */
+export const OnboardingStartSchema = z.object({
+  session_id: z.string(),
+  question: z.string().nullable(),
+})
+export type OnboardingStartResponse = z.infer<typeof OnboardingStartSchema>
+
+/**
+ * Onboarding answer response
+ */
+export const OnboardingAnswerSchema = z.object({
+  status: z.enum(['in_progress', 'completed', 'already_completed']),
+  next_question: z.string().nullable(),
+  facts_added: z.number().optional(),
+  summary: z.string().optional(),
+})
+export type OnboardingAnswerResponse = z.infer<typeof OnboardingAnswerSchema>
+
+/**
+ * Onboarding summary response
+ */
+export const OnboardingSummarySchema = z.object({
+  session: z.record(z.string(), z.any()),
+  kb_summary: z.string().nullable(),
+})
+export type OnboardingSummaryResponse = z.infer<typeof OnboardingSummarySchema>
 
 /**
  * Validate API response with schema

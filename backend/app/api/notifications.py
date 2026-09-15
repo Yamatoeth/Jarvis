@@ -48,7 +48,7 @@ async def schedule_notification(req: ScheduleRequest) -> NotificationStatusRespo
     # store scheduled notification in a Redis list for worker processing
     key = f"scheduled_notifications:{req.user_id}"
     payload = {"title": req.title, "body": req.body, "when_ts": req.when_ts}
-    await redis_client.client.rpush(key, payload.__str__())
+    await redis_client.client.rpush(key, json.dumps(payload))
     # In production, Celery/worker should pick these up and call push service
     return NotificationStatusResponse(status='scheduled')
 

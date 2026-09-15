@@ -129,41 +129,40 @@ async def _redis_pubsub_generator(user_id: str, request: Request) -> AsyncGenera
         return
 
     redis = await redis_module.get_redis()
+    pubsub = None
     try:
         # aioredis interface
-        try:
-            # use the low-level async client for pubsub
-            pubsub = redis.client.pubsub()
-            channel = f"memory_updates:{user_id}"
-            await pubsub.subscribe(channel)
-            while True:
-                if await _client_disconnected(request):
-                    break
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if message:
-                    data = message.get("data")
-                    if isinstance(data, (bytes, bytearray)):
-                        try:
-                            s = data.decode()
-                        except (UnicodeDecodeError, AttributeError) as e:
-                            logger.debug("Error decoding message: %s", type(e).__name__)
-                            s = str(data)
-                    else:
-                        s = json.dumps(data) if not isinstance(data, str) else data
-                    yield f"data: {s}\n\n"
+        pubsub = redis.client.pubsub()
+        channel = f"memory_updates:{user_id}"
+        await pubsub.subscribe(channel)
+        while True:
+            if await _client_disconnected(request):
+                break
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message:
+                data = message.get("data")
+                if isinstance(data, (bytes, bytearray)):
+                    try:
+                        s = data.decode()
+                    except (UnicodeDecodeError, AttributeError) as e:
+                        logger.debug("Error decoding message: %s", type(e).__name__)
+                        s = str(data)
                 else:
-                    yield ":\n\n"
-                    await asyncio.sleep(0.1)
-        except (asyncio.TimeoutError, ConnectionError) as e:
-            # fallback for other redis clients
-            logger.warning("redis pubsub error: %s", type(e).__name__)
-            for _ in range(3):
-                if await _client_disconnected(request):
-                    return
-                yield "event: heartbeat\ndata: {}\n\n"
-                await asyncio.sleep(1)
-        except Exception as e:
-            logger.exception("Unexpected error in redis pubsub: %s", str(e))
+                    s = json.dumps(data) if not isinstance(data, str) else data
+                yield f"data: {s}\n\n"
+            else:
+                yield ":\n\n"
+                await asyncio.sleep(0.1)
+    except (asyncio.TimeoutError, ConnectionError) as e:
+        # fallback for other redis clients
+        logger.warning("redis pubsub error: %s", type(e).__name__)
+        for _ in range(3):
+            if await _client_disconnected(request):
+                return
+            yield "event: heartbeat\ndata: {}\n\n"
+            await asyncio.sleep(1)
+    except Exception as e:
+        logger.exception("Unexpected error in redis pubsub: %s", str(e))
     finally:
         try:
             await pubsub.unsubscribe(channel)
@@ -274,3 +273,35 @@ async def memory_upsert(payload: UpsertRequest):
     except Exception as exc:
         logger.exception("memory_upsert failed: %s", str(exc))
         return UpsertResponse(success=False, added=0, error=str(exc))
+
+
+@router.get("/working/{user_id}")
+async def get_working_memory(user_id: str = Query(...)) -> dict:
+    """Return working memory (Redis) for a user.
+
+    Returns messages, state, and kb_summary from Redis.
+    Used by the frontend contextService to fetch server-side context.
+    """
+    try:
+        messages = await redis_client.get_messages(user_id, limit=20)
+        state = await redis_client.get_user_state(user_id)
+        kb_summary = await redis_client.get_working_memory(user_id, "kb_summary")
+        return {
+            "messages": messages,
+            "state": state,
+            "kb_summary": kb_summary,
+        }
+    except Exception as e:
+        logger.exception("Failed to get working memory for user_id=%s: %s", user_id, e)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve working memory: {e}")
+
+
+@router.delete("/messages/{user_id}")
+async def clear_messages(user_id: str = Query(...)) -> dict:
+    """Clear conversation history (Redis messages) for a user."""
+    try:
+        await redis_client.clear_messages(user_id)
+        return {"status": "cleared", "user_id": user_id}
+    except Exception as e:
+        logger.exception("Failed to clear messages for user_id=%s: %s", user_id, e)
+        raise HTTPException(status_code=500, detail=f"Failed to clear messages: {e}")

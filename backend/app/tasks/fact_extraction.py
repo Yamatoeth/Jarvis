@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.fact_extractor import extract_facts, facts_to_kb_updates
+from app.core.domain_config import MODEL_BY_DOMAIN
 from app.db import models
 from app.db.database import async_session_maker
 from app.db.pinecone_client import pinecone_client, get_pinecone
@@ -25,16 +26,6 @@ from app.providers import embedding_provider
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
-MODEL_BY_DOMAIN = {
-    "identity": models.KnowledgeIdentity,
-    "goals": models.KnowledgeGoals,
-    "projects": models.KnowledgeProjects,
-    "finances": models.KnowledgeFinances,
-    "relationships": models.KnowledgeRelationships,
-    "patterns": models.KnowledgePatterns,
-}
-
 
 try:
     from celery import Celery

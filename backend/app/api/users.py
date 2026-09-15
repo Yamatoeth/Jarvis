@@ -22,6 +22,6 @@ async def get_or_create_user(user_id: str, db: AsyncSession = Depends(get_db)):
             )
             db.add(user)
             await db.flush()
-        return UserResponse(id=user.id, email=getattr(user, "email", None))
+        return UserResponse(id=user.id, email=getattr(user, "email", None), full_name=getattr(user, "full_name", None))
     except SQLAlchemyError:
-        return UserResponse(id=user_id, email=email)
+        return UserResponse(id=user_id, email=email, full_name=f"User {user_id[:8]}")

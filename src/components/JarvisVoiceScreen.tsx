@@ -1,132 +1,60 @@
+/**
+ * JarvisVoiceScreen — main voice interaction screen
+ *
+ * HI1: centralized status derived from useVoiceAssistant
+ * HI2: unified error banner with dismiss
+ * HI3: onboarding guard → inline loading → error
+ * HI4: backend user bootstrap with local fallback
+ * HI5: conversation selector (horizontal chip row + modal picker)
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  View,
-  Text,
-  StyleSheet,
+  Alert,
+  PermissionsAndroid,
   Platform,
   Pressable,
-  Animated,
-  Easing,
-  Dimensions,
-  Switch,
-  TextInput,
-  ActivityIndicator,
-  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import SimpleVoiceOrb from '../components/SimpleVoiceOrb'
-import { getRandomValues } from 'expo-crypto'
 import * as Haptics from 'expo-haptics'
-import { useFonts as useOrbitron, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
-import { useFonts as useRajdhani, Rajdhani_300Light, Rajdhani_500Medium } from '@expo-google-fonts/rajdhani'
-import { useWakeWord } from '../hooks/useWakeWord'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { Audio } from 'expo-av'
+import { useFonts, Rajdhani_400Regular, Rajdhani_500Medium, Rajdhani_700Bold } from '@expo-google-fonts/rajdhani'
+import Svg, { Circle } from 'react-native-svg'
+
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant'
-import apiClient from '../services/apiClient'
-import { useSettingsStore } from '../store/settingsStore'
+import { useChatHistory } from '../hooks/useChatHistory'
+import { useOnboarding } from '../hooks/useOnboarding'
+import { useNotificationPermission } from '../hooks/useNotificationPermission'
+import { useTheme } from '../hooks/useTheme'
+import { apiClient } from '../services/apiClient'
+import { audioRecordingService } from '../services/audioRecording'
+import { getBackendBaseUrl } from '../services/backendUrl'
+import { SimpleVoiceOrb } from './SimpleVoiceOrb'
 
-const { width: screenWidth } = Dimensions.get('window')
-const SPHERE_SIZE = Math.min(screenWidth * 0.88, 340)
+// ── Constants ────────────────────────────────────────────
+const SPHERE_SIZE = 120
+const MAX_DURATION_MS = 60_000
+const MIN_DURATION_MS = 500
 
-function WaveBars({ visible }: { visible: boolean }) {
-  const heights = [10, 22, 34, 18, 30, 14, 36, 20, 26]
-  const anims = useRef(heights.map(() => new Animated.Value(0.35))).current
+// ── Component ────────────────────────────────────────────
+export function JarvisVoiceScreen({
+  userId,
+  onNavigate,
+  onLogout,
+}: {
+  userId: string | null
+  onNavigate?: (screen: string) => void
+  onLogout?: () => void
+}) {
+  const insets = useSafeAreaInsets()
+  const { theme } = useTheme()
 
-  useEffect(() => {
-    const loops = anims.map((a, i) => {
-      const seq = Animated.sequence([
-        Animated.timing(a, {
-          toValue: 1,
-          duration: 420,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-          delay: i * 80,
-        }),
-        Animated.timing(a, {
-          toValue: 0.35,
-          duration: 420,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-      return Animated.loop(seq)
-    })
-
-    if (visible) {
-      loops.forEach((l) => l.start())
-    }
-
-    return () => loops.forEach((l) => l.stop())
-  }, [visible, anims])
-
-  return (
-    <View style={styles.waveRow}>
-      {heights.map((h, i) => (
-        <Animated.View
-          key={i}
-          style={[
-            styles.waveBar,
-            {
-              height: h,
-              transform: [{ scaleY: anims[i] }],
-              marginHorizontal: 4,
-            },
-          ]}
-        />
-      ))}
-    </View>
-  )
-}
-
-type Props = {
-  onNavigate?: (route: 'home' | 'profile' | 'history' | 'knowledge' | 'settings') => void
-}
-
-const LOCAL_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz'
-
-export function createLocalUserId() {
-  const bytes = getRandomValues(new Uint8Array(6))
-  const suffix = Array.from(bytes, (byte) => LOCAL_ID_ALPHABET[byte % LOCAL_ID_ALPHABET.length] ?? '0').join(
-    '',
-  )
-  return `local-${Date.now().toString(36)}-${suffix}`
-}
-
-function formatTtsVoiceLabel(voice: string) {
-  if (voice === 'aura-2-thalia-en') {
-    return 'Default voice'
-  }
-  return voice
-    .replace(/^aura-\d+-/i, '')
-    .replace(/-en$/i, '')
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-}
-
-export default function JarvisVoiceScreen({ onNavigate }: Props) {
-  const [orbitronLoaded] = useOrbitron({ Orbitron_700Bold })
-  const [rajdhaniLoaded] = useRajdhani({ Rajdhani_300Light, Rajdhani_500Medium })
-  const fontsLoaded = orbitronLoaded && rajdhaniLoaded
-
-  const [wakeEnabled, setWakeEnabled] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [isBootstrapping, setIsBootstrapping] = useState(true)
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
-  const [ttsVoices, setTtsVoices] = useState<string[]>([])
-  const toggleRecordingInFlight = useRef(false)
-  const backendLastSeenAt = useRef(0)
-  const wake = useWakeWord()
-  const userId = useSettingsStore((s) => s.userId)
-  const setUser = useSettingsStore((s) => s.setUser)
-  const preferredTtsVoice = useSettingsStore((s) => s.settings.preferredTtsVoice)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const markBackendConnected = useCallback(() => {
-    backendLastSeenAt.current = Date.now()
-    setBackendStatus('connected')
-  }, [])
-
+  // Voice pipeline
   const {
+    state,
     isListening,
     isProcessing,
     isSpeaking,
@@ -135,160 +63,44 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
     transcript,
     response,
     streamingResponse,
+    audioLevel,
     lastLatency,
     startListening,
     stopListening,
-    sendText,
     cancel,
+    sendText,
+    clearHistory,
+    initialize,
   } = useVoiceAssistant({
     streamLLM: true,
     playAudio: true,
-    onComplete: markBackendConnected,
+    onTranscript: () => {},
+    onResponse: () => {},
+    onComplete: () => {},
+    onError: () => {},
   })
 
-  const WAKE_KEY = 'wakeEnabled_v1'
+  // Chat history (local fallback)
+  const { messages, addMessage, clearHistory: clearLocalHistory } = useChatHistory()
 
-  useEffect(() => {
-    let active = true
+  // Onboarding
+  const { hasSeenOnboarding, onboardingInProgress, completeOnboarding } = useOnboarding(userId)
 
-    async function bootstrapUser() {
-      const stableUserId = userId || createLocalUserId()
+  // Notification permission (Phase 2 — read-only for now)
+  const notificationGranted = useNotificationPermission()
 
-      try {
-        if (!userId) {
-          setUser(stableUserId, `${stableUserId}@local.invalid`, 'Local User')
-        }
-      } finally {
-        if (active) {
-          setIsBootstrapping(false)
-        }
-      }
+  // Conversation selector state
+  const [conversations, setConversations] = useState<Array<{ id: string; title: string; updated_at?: string }>>([])
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [showConvPicker, setShowConvPicker] = useState(false)
+  const [convLoading, setConvLoading] = useState(false)
 
-      void apiClient.getOrCreateUser(stableUserId).catch((bootstrapError) => {
-        console.warn('Unable to create backend user, continuing in local mode', bootstrapError)
-      })
-    }
+  // Derived
+  const isSessionActive = isListening || isProcessing || isSpeaking
+  const backendStatus = isReady ? 'online' : 'offline'
+  const backendLabel = backendStatus === 'online' ? 'Backend connected' : 'Backend offline'
+  const latencyLabel = lastLatency != null ? `${lastLatency}ms` : '—'
 
-    void bootstrapUser()
-    return () => {
-      active = false
-    }
-  }, [setUser, userId])
-
-  useEffect(() => {
-    let active = true
-
-    const checkBackend = async () => {
-      try {
-        await apiClient.checkHealth()
-        if (active) markBackendConnected()
-      } catch {
-        if (active && Date.now() - backendLastSeenAt.current > 30000) {
-          setBackendStatus('offline')
-        }
-      }
-    }
-
-    const loadVoices = async () => {
-      try {
-        const payload = await apiClient.getTtsVoices()
-        if (!active) return
-        markBackendConnected()
-        setTtsVoices(payload.voices || [])
-        if (!preferredTtsVoice && payload.default) {
-          updateSettings({ preferredTtsVoice: payload.default })
-        }
-      } catch {
-        if (active) setTtsVoices([])
-      }
-    }
-
-    void checkBackend()
-    void loadVoices()
-    const intervalId = setInterval(() => {
-      void checkBackend()
-    }, 10000)
-
-    return () => {
-      active = false
-      clearInterval(intervalId)
-    }
-  }, [markBackendConnected, preferredTtsVoice, updateSettings])
-
-  const onToggleRecording = useCallback(async () => {
-    if (toggleRecordingInFlight.current || isBootstrapping) {
-      return
-    }
-
-    toggleRecordingInFlight.current = true
-    try {
-      if (isListening) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-        void stopListening()
-        return
-      }
-
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-      await cancel()
-      await startListening()
-    } finally {
-      toggleRecordingInFlight.current = false
-    }
-  }, [cancel, isBootstrapping, isListening, startListening, stopListening])
-
-  useEffect(() => {
-    wake.onWake(() => {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-      void startListening()
-      setTimeout(() => {
-        void stopListening()
-      }, 2500)
-    })
-  }, [startListening, stopListening, wake])
-
-  useEffect(() => {
-    let mounted = true
-    async function apply() {
-      if (!mounted) return
-      if (wakeEnabled) {
-        await wake.start()
-      } else {
-        await wake.stop()
-      }
-    }
-    void apply()
-    return () => {
-      mounted = false
-    }
-  }, [wakeEnabled, wake])
-
-  useEffect(() => {
-    let mounted = true
-    async function load() {
-      try {
-        const value = await AsyncStorage.getItem(WAKE_KEY)
-        if (!mounted) return
-        setWakeEnabled(value === '1')
-      } catch {
-        // ignore persisted wake-word read failures
-      }
-    }
-    void load()
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  const toggleWake = useCallback(async (value: boolean) => {
-    try {
-      setWakeEnabled(value)
-      await AsyncStorage.setItem(WAKE_KEY, value ? '1' : '0')
-    } catch {
-      // ignore wake-word persistence write errors
-    }
-  }, [])
-
-  const displayResponse = streamingResponse || response
   const statusLabel = useMemo(() => {
     if (isBootstrapping) return 'Booting assistant'
     if (isListening) return 'Listening'
@@ -298,48 +110,178 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
     return 'Ready'
   }, [isBootstrapping, isListening, isProcessing, isReady, isSpeaking])
 
-  const recordingLabel = useMemo(() => {
-    if (isBootstrapping) return 'Preparing local session'
-    if (isProcessing || isSpeaking) return 'Interrupt and ask another question'
-    if (isListening) return 'Stop recording and send'
-    return 'Start voice recording'
-  }, [isBootstrapping, isListening, isProcessing, isSpeaking])
+  // Bootstrapping state
+  const [isBootstrapping, setIsBootstrapping] = useState(true)
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null)
 
-  const backendLabel = useMemo(() => {
-    if (backendStatus === 'checking') return 'Backend: checking'
-    if (backendStatus === 'connected') return 'Backend: online'
-    return 'Backend: offline'
-  }, [backendStatus])
+  // ── Bootstrapping ──────────────────────────────────────
+  useEffect(() => {
+    let active = true
 
-  const latencyLabel = useMemo(() => {
-    if (lastLatency == null) return 'No reply yet'
-    return `Last reply ${lastLatency} ms`
-  }, [lastLatency])
+    async function bootstrapUser() {
+      if (!userId) {
+        setIsBootstrapping(false)
+        return
+      }
 
-  const handleSendText = useCallback(async () => {
-    const trimmed = draft.trim()
-    if (!trimmed || isProcessing || isBootstrapping) {
-      return
+      try {
+        await initialize()
+        if (!active) return
+
+        // Ensure backend user exists
+        await apiClient.getOrCreateUser(userId)
+        if (!active) return
+
+        // Load conversations
+        setConvLoading(true)
+        const convs = await apiClient.listConversations(userId)
+        if (!active) return
+        setConversations(convs)
+        if (convs.length > 0 && !activeConversationId) {
+          setActiveConversationId(convs[0].id)
+        }
+      } catch (err) {
+        console.warn('[JarvisVoiceScreen] bootstrap error:', err)
+        setBootstrapError(err instanceof Error ? err.message : 'Bootstrap failed')
+      } finally {
+        if (active) {
+          setIsBootstrapping(false)
+          setConvLoading(false)
+        }
+      }
     }
-    setDraft('')
-    await sendText(trimmed)
-  }, [draft, isBootstrapping, isProcessing, sendText])
+
+    if (hasSeenOnboarding && userId) {
+      void bootstrapUser()
+    } else {
+      setIsBootstrapping(false)
+    }
+
+    return () => { active = false }
+  }, [userId, hasSeenOnboarding, initialize])
+
+  // ── Conversation management ────────────────────────────
+  const fetchConversations = useCallback(async () => {
+    if (!userId) return
+    try {
+      const convs = await apiClient.listConversations(userId)
+      setConversations(convs)
+    } catch {
+      // silent — conversations list is best-effort
+    }
+  }, [userId])
+
+  const handleCreateConversation = useCallback(async () => {
+    if (!userId) return
+    try {
+      const conv = await apiClient.createConversation(userId)
+      setConversations((prev) => [conv, ...prev])
+      setActiveConversationId(conv.id)
+      setShowConvPicker(false)
+    } catch (e) {
+      console.warn('Failed to create conversation', e)
+    }
+  }, [userId])
+
+  const handleSelectConversation = useCallback((id: string) => {
+    setActiveConversationId(id)
+    setShowConvPicker(false)
+  }, [])
+
+  const handleToggleConversationPicker = useCallback(() => {
+    setShowConvPicker((prev) => !prev)
+  }, [])
+
+  // ── Recording controls ─────────────────────────────────
+  const onToggleRecording = useCallback(async () => {
+    if (isBootstrapping || isProcessing) return
+
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    if (isListening) {
+      await stopListening()
+    } else {
+      // Ensure we have an active conversation before starting
+      if (!activeConversationId && userId) {
+        try {
+          const conv = await apiClient.createConversation(userId)
+          setActiveConversationId(conv.id)
+        } catch (e) {
+          console.warn('Failed to create conversation for voice session', e)
+        }
+      }
+      await cancel()
+      await startListening()
+    }
+  }, [cancel, isBootstrapping, isListening, isProcessing, startListening, stopListening, activeConversationId, userId])
+
+  // ── Text submit ────────────────────────────────────────
+  const onSubmitText = useCallback(async (text: string) => {
+    if (!text.trim() || isBootstrapping) return
+    if (!activeConversationId && userId) {
+      try {
+        const conv = await apiClient.createConversation(userId)
+        setActiveConversationId(conv.id)
+      } catch (e) {
+        console.warn('Failed to create conversation', e)
+      }
+    }
+    await sendText(text)
+  }, [activeConversationId, userId, sendText, isBootstrapping])
+
+  // ── Clear data ─────────────────────────────────────────
+  const handleClearData = useCallback(async () => {
+    if (!userId) return
+    Alert.alert(
+      'Delete All Data',
+      'This will permanently delete all conversations, knowledge base entries, and memories for this user. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.clearMessages(userId)
+              await apiClient.deleteAllKnowledge(userId)
+              clearLocalHistory()
+              setConversations([])
+              setActiveConversationId(null)
+            } catch (e) {
+              console.warn('Failed to delete all data', e)
+            }
+          },
+        },
+      ]
+    )
+  }, [userId, clearLocalHistory])
+
+  // ── Render ─────────────────────────────────────────────
+  const [fontsLoaded] = useFonts({
+    Rajdhani_400Regular,
+    Rajdhani_500Medium,
+    Rajdhani_700Bold,
+  })
 
   if (!fontsLoaded) return null
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.logo}>JARVIS</Text>
         <View style={styles.headerRight}>
-          <Switch
-            value={wakeEnabled}
-            onValueChange={toggleWake}
-            trackColor={{ false: '#173947', true: '#00d4ff' }}
-            thumbColor={wakeEnabled ? '#ffffff' : '#f4f3f4'}
-            accessibilityLabel="Enable wake word"
-            accessibilityHint="Listens for the wake word when enabled"
-          />
+          {/* HI5: conversation selector — hidden during active session */}
+          {!isSessionActive && (
+            <TouchableOpacity
+              onPress={handleToggleConversationPicker}
+              style={styles.iconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Select conversation"
+              accessibilityHint="Choose an active conversation"
+            >
+              <Ionicons name="chatbox-outline" size={28} color="#00d4ff" />
+            </TouchableOpacity>
+          )}
           <Pressable
             onPress={() => onNavigate?.('profile')}
             style={styles.iconButton}
@@ -350,6 +292,8 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
           </Pressable>
         </View>
       </View>
+
+      {/* Quick nav */}
       <View style={styles.quickNav} accessibilityRole="toolbar">
         <Pressable
           onPress={() => onNavigate?.('history')}
@@ -380,6 +324,7 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
         </Pressable>
       </View>
 
+      {/* Status area */}
       <View style={styles.center}>
         <View style={styles.statusPill} accessibilityRole="text" accessibilityLiveRegion="polite">
           {isBootstrapping || isProcessing ? (
@@ -394,6 +339,7 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
         </Text>
         <Text style={styles.latencyStatus}>{latencyLabel}</Text>
 
+        {/* Voice orb */}
         <View style={{ width: SPHERE_SIZE, height: SPHERE_SIZE, alignItems: 'center', justifyContent: 'center' }}>
           <SimpleVoiceOrb
             state={isListening ? 'listening' : isSpeaking ? 'speaking' : isProcessing ? 'thinking' : 'idle'}
@@ -401,9 +347,7 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
           />
 
           <Pressable
-            onPress={() => {
-              void onToggleRecording()
-            }}
+            onPress={() => { void onToggleRecording() }}
             disabled={isBootstrapping}
             style={{
               position: 'absolute',
@@ -413,212 +357,177 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
             }}
             android_ripple={{ color: 'transparent' }}
             accessibilityRole="button"
-            accessibilityLabel={recordingLabel}
-            accessibilityHint="Double tap to control voice recording"
-            accessibilityState={{ disabled: isBootstrapping, busy: isProcessing }}
+            accessibilityLabel={isListening ? 'Stop recording' : 'Start recording'}
+            accessibilityHint={isListening ? 'Tap to stop recording' : 'Tap to start recording'}
           />
         </View>
 
-        <View style={{ height: 18 }} />
-        <WaveBars visible={isListening || isProcessing || isSpeaking} />
-        <View style={{ height: 18 }} />
-        <Text style={[styles.hint, (isListening || isSpeaking) && styles.hintActive]}>
-          {isListening
-            ? 'Tap to send'
-            : isProcessing || isSpeaking
-              ? 'Tap to interrupt'
-              : isBootstrapping
-                ? 'Preparing local session'
-                : 'Tap to speak'}
-        </Text>
+        {/* Transcript / response */}
+        {(transcript || streamingResponse || response) && (
+          <View style={styles.chatArea}>
+            {transcript ? (
+              <Text style={styles.transcript}>{transcript}</Text>
+            ) : null}
+            {streamingResponse ? (
+              <Text style={styles.response}>{streamingResponse}</Text>
+            ) : response ? (
+              <Text style={styles.response}>{response}</Text>
+            ) : null}
+          </View>
+        )}
       </View>
 
-      <View style={styles.outputPanel}>
-        <Text style={styles.panelTitle}>Conversation</Text>
-        {ttsVoices.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.voiceSelectorScroll}
-            contentContainerStyle={styles.voiceSelectorContent}
-          >
-            {ttsVoices.slice(0, 12).map((voice) => {
-              const selected = voice === preferredTtsVoice
-              const voiceLabel = formatTtsVoiceLabel(voice)
-              return (
-                <Pressable
-                  key={voice}
-                  onPress={() => updateSettings({ preferredTtsVoice: voice })}
-                  style={[styles.voiceChip, selected && styles.voiceChipSelected]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Use ${voiceLabel} voice`}
-                  accessibilityState={{ selected }}
-                >
-                  <Text style={[styles.voiceChipText, selected && styles.voiceChipTextSelected]}>
-                    {voiceLabel}
+      {/* Conversation picker modal */}
+      {showConvPicker && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Conversations</Text>
+              <Pressable
+                onPress={() => setShowConvPicker(false)}
+                style={styles.modalCloseButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close conversation picker"
+              >
+                <Ionicons name="close-outline" size={24} color="#00d4ff" />
+              </Pressable>
+            </View>
+
+            {convLoading ? (
+              <Text style={styles.modalEmptyText}>Loading…</Text>
+            ) : conversations.length === 0 ? (
+              <Text style={styles.modalEmptyText}>No conversations yet</Text>
+            ) : null}
+
+            {conversations.map((conv) => (
+              <Pressable
+                key={conv.id}
+                onPress={() => handleSelectConversation(conv.id)}
+                style={[
+                  styles.modalItem,
+                  activeConversationId === conv.id && styles.modalItemActive,
+                ]}
+              >
+                <View style={styles.modalItemLeft}>
+                  <View style={[
+                    styles.modalItemDot,
+                    activeConversationId === conv.id && styles.modalItemDotActive,
+                  ]} />
+                  <Text style={styles.modalItemText}>
+                    {conv.title || 'Untitled'}
                   </Text>
-                </Pressable>
-              )
-            })}
-          </ScrollView>
-        ) : null}
-        <ScrollView
-          style={styles.outputScroll}
-          contentContainerStyle={styles.outputScrollContent}
-          accessibilityLabel="Conversation messages"
-        >
-          {transcript ? (
-            <View style={styles.messageCard}>
-              <Text style={styles.messageLabel}>You</Text>
-              <Text style={styles.messageText}>{transcript}</Text>
-            </View>
-          ) : null}
+                </View>
+                {conv.updated_at ? (
+                  <Text style={[
+                    styles.modalItemDate,
+                    activeConversationId === conv.id && styles.modalItemDateActive,
+                  ]}>
+                    {conv.updated_at}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ))}
 
-          {displayResponse ? (
-            <View style={styles.messageCard}>
-              <Text style={styles.messageLabel}>JARVIS</Text>
-              <Text style={styles.messageText}>{displayResponse}</Text>
-            </View>
-          ) : (
-            <View style={styles.messageCard}>
-              <Text style={styles.messageLabel}>JARVIS</Text>
-              <Text style={styles.placeholderText}>
-                Ask a question below, or tap the orb to speak.
-              </Text>
-            </View>
-          )}
-
-          {error ? (
-            <View style={[styles.messageCard, styles.errorCard]}>
-              <Text style={styles.messageLabel}>Issue</Text>
-              <Text style={styles.messageText}>{error}</Text>
-              {backendStatus === 'offline' ? (
-                <Text style={styles.errorHint}>
-                  Start the FastAPI backend and verify `EXPO_PUBLIC_API_URL` points to it.
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
-        </ScrollView>
-
-        <View style={styles.composer}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Ask JARVIS anything"
-            placeholderTextColor="rgba(255,255,255,0.35)"
-            style={styles.input}
-            editable={!isBootstrapping && !isProcessing}
-            accessibilityLabel="Text message"
-            accessibilityHint="Type a question for JARVIS"
-            onSubmitEditing={() => {
-              void handleSendText()
-            }}
-            returnKeyType="send"
-          />
-          <Pressable
-            onPress={() => {
-              void handleSendText()
-            }}
-            disabled={!draft.trim() || isBootstrapping || isProcessing}
-            style={[
-              styles.sendButton,
-              (!draft.trim() || isBootstrapping || isProcessing) && styles.sendButtonDisabled,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            accessibilityState={{ disabled: !draft.trim() || isBootstrapping || isProcessing }}
-          >
-            <Ionicons name="arrow-up" size={20} color="#00131a" />
-          </Pressable>
+            <Pressable
+              onPress={handleCreateConversation}
+              style={styles.modalNewButton}
+              accessibilityRole="button"
+              accessibilityLabel="New conversation"
+            >
+              <Ionicons name="add-outline" size={18} color="#00d4ff" />
+              <Text style={styles.modalNewButtonText}>New Conversation</Text>
+            </Pressable>
+          </View>
         </View>
+      )}
+
+      {/* Bottom action bar */}
+      <View style={[styles.bottomBar, { paddingBottom: insets.bottom }]}>
+        <Pressable
+          onPress={handleClearData}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Delete all data"
+        >
+          <Ionicons name="trash-outline" size={22} color="#ff6b6b" />
+        </Pressable>
+        {onLogout ? (
+          <Pressable
+            onPress={onLogout}
+            style={styles.iconButton}
+            accessibilityRole="button"
+            accessibilityLabel="Logout"
+          >
+            <Ionicons name="log-out-outline" size={22} color="#00d4ff" />
+          </Pressable>
+        ) : null}
       </View>
     </SafeAreaView>
   )
 }
 
+// ── Styles ───────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#002832',
-    paddingTop: Platform.OS === 'ios' ? 56 : 24,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    backgroundColor: '#0a0e17',
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    height: 48,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   logo: {
     color: '#00d4ff',
-    fontFamily: 'Orbitron_700Bold',
-    fontSize: 18,
-    letterSpacing: 4,
-    textShadowColor: '#00d4ff',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
+    fontFamily: 'Rajdhani_700Bold',
+    fontSize: 24,
+    letterSpacing: 2,
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+  },
+  iconButton: {
+    padding: 8,
   },
   quickNav: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    gap: 24,
+    paddingVertical: 8,
   },
   quickNavButton: {
-    minHeight: 44,
-    flex: 1,
-    maxWidth: 116,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 212, 255, 0.18)',
-    backgroundColor: 'rgba(0, 212, 255, 0.08)',
+    gap: 4,
   },
   quickNavText: {
-    color: '#c9f7ff',
-    fontFamily: 'Rajdhani_500Medium',
-    fontSize: 14,
-  },
-  iconButton: {
-    minHeight: 44,
-    minWidth: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_400Regular',
+    fontSize: 12,
   },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    gap: 12,
   },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: 'rgba(0, 212, 255, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 212, 255, 0.25)',
-    marginBottom: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 212, 255, 0.08)',
   },
   statusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(0, 212, 255, 0.4)',
   },
   statusDotActive: {
     backgroundColor: '#00d4ff',
@@ -627,169 +536,143 @@ const styles = StyleSheet.create({
     color: '#c9f7ff',
     fontFamily: 'Rajdhani_500Medium',
     fontSize: 14,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
   },
   backendStatus: {
-    color: 'rgba(201, 247, 255, 0.7)',
-    fontFamily: 'Rajdhani_500Medium',
-    fontSize: 14,
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  latencyStatus: {
-    color: 'rgba(201, 247, 255, 0.54)',
-    fontFamily: 'Rajdhani_500Medium',
+    color: 'rgba(201, 247, 255, 0.5)',
+    fontFamily: 'Rajdhani_400Regular',
     fontSize: 12,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 16,
   },
   backendStatusOffline: {
-    color: '#ff8f8f',
+    color: '#ff6b6b',
   },
-  hint: {
-    marginTop: 8,
-    color: '#ffffff',
+  latencyStatus: {
+    color: 'rgba(201, 247, 255, 0.35)',
     fontFamily: 'Rajdhani_300Light',
-    fontSize: 13,
-    letterSpacing: 4,
-    textTransform: 'uppercase',
+    fontSize: 11,
   },
-  hintActive: {
-    color: '#00d4ff',
+  chatArea: {
+    width: '80%',
+    alignItems: 'center',
+    gap: 4,
   },
-  waveRow: {
+  transcript: {
+    color: 'rgba(201, 247, 255, 0.7)',
+    fontFamily: 'Rajdhani_400Regular',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  response: {
+    color: '#c9f7ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+  bottomBar: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 20,
+    paddingTop: 8,
+    paddingHorizontal: 20,
   },
-  waveBar: {
-    width: 6,
-    backgroundColor: '#00d4ff',
-    borderRadius: 3,
-    shadowColor: '#00d4ff',
-    shadowOpacity: 0.45,
-    shadowRadius: 5,
+  modalOverlay: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  outputPanel: {
-    marginHorizontal: 16,
-    padding: 14,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0, 12, 18, 0.72)',
+  modalContent: {
+    width: '85%',
+    maxHeight: '60%',
+    backgroundColor: '#0f1520',
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 212, 255, 0.18)',
-    minHeight: 280,
+    borderColor: 'rgba(0, 212, 255, 0.2)',
   },
-  panelTitle: {
-    color: '#7edff2',
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: '#00d4ff',
     fontFamily: 'Rajdhani_500Medium',
     fontSize: 16,
-    letterSpacing: 1.6,
+    letterSpacing: 1.4,
     textTransform: 'uppercase',
-    marginBottom: 10,
   },
-  voiceSelectorScroll: {
-    maxHeight: 42,
-    marginBottom: 10,
+  modalCloseButton: {
+    padding: 4,
+    margin: -4,
   },
-  voiceSelectorContent: {
-    gap: 8,
-    paddingBottom: 2,
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
-  voiceChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  voiceChipSelected: {
-    borderColor: 'rgba(0, 212, 255, 0.55)',
-    backgroundColor: 'rgba(0, 212, 255, 0.16)',
-  },
-  voiceChipText: {
-    color: 'rgba(255,255,255,0.78)',
-    fontFamily: 'Rajdhani_500Medium',
-    fontSize: 14,
-    letterSpacing: 0.6,
-  },
-  voiceChipTextSelected: {
-    color: '#dffbff',
-  },
-  outputScroll: {
-    maxHeight: 210,
-  },
-  outputScrollContent: {
-    gap: 10,
-    paddingBottom: 8,
-  },
-  messageCard: {
-    borderRadius: 16,
-    padding: 12,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-  errorCard: {
-    borderColor: 'rgba(255, 87, 87, 0.28)',
-    backgroundColor: 'rgba(255, 87, 87, 0.08)',
-  },
-  messageLabel: {
-    color: '#59e1ff',
-    fontFamily: 'Rajdhani_500Medium',
-    fontSize: 13,
-    letterSpacing: 1.3,
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  messageText: {
-    color: '#f4fcff',
-    fontFamily: 'Rajdhani_300Light',
-    fontSize: 18,
-    lineHeight: 24,
-  },
-  placeholderText: {
-    color: 'rgba(255,255,255,0.58)',
-    fontFamily: 'Rajdhani_300Light',
-    fontSize: 18,
-    lineHeight: 24,
-  },
-  errorHint: {
-    color: 'rgba(255,255,255,0.72)',
-    fontFamily: 'Rajdhani_300Light',
-    fontSize: 15,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  composer: {
-    marginTop: 12,
+  modalItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  input: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    color: '#ffffff',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontFamily: 'Rajdhani_500Medium',
-    fontSize: 18,
   },
-  sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  modalItemDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(0, 212, 255, 0.5)',
+  },
+  modalItemText: {
+    color: '#c9f7ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 15,
+    flex: 1,
+  },
+  modalItemDate: {
+    color: 'rgba(201, 247, 255, 0.55)',
+    fontFamily: 'Rajdhani_400Regular',
+    fontSize: 12,
+  },
+  modalItemDateActive: {
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_400Regular',
+    fontSize: 12,
+  },
+  modalEmptyText: {
+    color: 'rgba(201, 247, 255, 0.5)',
+    fontFamily: 'Rajdhani_300Light',
+    fontSize: 15,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  modalNewButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#00d4ff',
+    gap: 8,
+    paddingVertical: 14,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 212, 255, 0.3)',
+    backgroundColor: 'rgba(0, 212, 255, 0.08)',
   },
-  sendButtonDisabled: {
-    opacity: 0.45,
+  modalNewButtonText: {
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_500Medium',
+    fontSize: 15,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  modalItemDateActive: {
+    color: '#00d4ff',
+    fontFamily: 'Rajdhani_400Regular',
+    fontSize: 12,
   },
 })

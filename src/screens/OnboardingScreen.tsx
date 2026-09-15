@@ -143,17 +143,11 @@ export function OnboardingScreen({ onComplete }: Props) {
         <TouchableOpacity
           className="bg-primary py-4 rounded-xl items-center active:opacity-80"
           onPress={nextSlide}
-          disabled={currentIndex === slides.length - 2 && notificationGranted === false}
         >
           <Text className="text-white font-semibold text-base">
             {currentIndex === slides.length - 1 ? 'Get Started' : 'Next'}
           </Text>
         </TouchableOpacity>
-        {currentIndex === slides.length - 2 && notificationGranted === false && (
-          <Text className="text-center text-xs text-red-500 mt-2">
-            Please allow notifications to continue.
-          </Text>
-        )}
       </View>
     </SafeAreaView>
   )
