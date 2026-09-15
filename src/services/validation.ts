@@ -123,6 +123,35 @@ export const ProcessQueryResponseSchema = z.object({
 export type ProcessQueryResponse = z.infer<typeof ProcessQueryResponseSchema>
 
 /**
+ * Onboarding session start response
+ */
+export const OnboardingStartSchema = z.object({
+  session_id: z.string(),
+  question: z.string().nullable(),
+})
+export type OnboardingStartResponse = z.infer<typeof OnboardingStartSchema>
+
+/**
+ * Onboarding answer response
+ */
+export const OnboardingAnswerSchema = z.object({
+  status: z.enum(['in_progress', 'completed', 'already_completed']),
+  next_question: z.string().nullable(),
+  facts_added: z.number().optional(),
+  summary: z.string().optional(),
+})
+export type OnboardingAnswerResponse = z.infer<typeof OnboardingAnswerSchema>
+
+/**
+ * Onboarding summary response
+ */
+export const OnboardingSummarySchema = z.object({
+  session: z.record(z.string(), z.any()),
+  kb_summary: z.string().nullable(),
+})
+export type OnboardingSummaryResponse = z.infer<typeof OnboardingSummarySchema>
+
+/**
  * Validate API response with schema
  * Throws if validation fails
  */

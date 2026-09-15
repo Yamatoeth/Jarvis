@@ -27,6 +27,23 @@ from app.auth import decode_token
 from app.core.config import get_settings
 from app.core.context_builder import build_context
 from app.core.prompt_engine import build_messages, strip_markdown_for_voice
+from app.core.ws_protocol import (
+    WS_READY,
+    WS_STT_START,
+    WS_STT_DONE,
+    WS_ACK_AUDIO,
+    WS_CONTEXT_BUILT,
+    WS_LLM_CHUNK,
+    WS_LLM_ERROR,
+    WS_LLM_DONE,
+    WS_TTS_AUDIO_CHUNK,
+    WS_TTS_AUDIO_DONE,
+    WS_TTS_AUDIO_BASE64,
+    WS_ERROR,
+    WS_IGNORED,
+    WS_FINAL,
+    WS_AUDIO_CHUNK,
+)
 from app.services.kokoro_service import kokoro_tts_service
 from app.services.conversation_memory import append_turn
 from app.providers import AudioMetadata, llm_provider, stt_provider, tts_provider
@@ -110,19 +127,19 @@ async def stream_chat_response(messages, websocket: WebSocket) -> str:
     try:
         async for delta in llm_provider.stream_chat(messages):
             full_text += delta
-            await _safe_send_json(websocket, {"type": "llm_chunk", "data": delta})
+            await _safe_send_json(websocket, {"type": WS_LLM_CHUNK, "data": delta})
 
     except asyncio.TimeoutError:
         logger.warning("LLM streaming timed out")
-        await _safe_send_json(websocket, {"type": "error", "message": "LLM streaming timed out"})
+        await _safe_send_json(websocket, {"type": WS_LLM_ERROR, "message": "LLM streaming timed out"})
     except (ValueError, RuntimeError) as e:
         logger.error("LLM streaming error: %s", type(e).__name__)
-        await _safe_send_json(websocket, {"type": "error", "message": "LLM streaming failed"})
+        await _safe_send_json(websocket, {"type": WS_LLM_ERROR, "message": "LLM streaming failed"})
     except Exception as e:
         logger.exception("Unexpected error during LLM streaming: %s", str(e))
-        await _safe_send_json(websocket, {"type": "error", "message": "LLM streaming failed"})
+        await _safe_send_json(websocket, {"type": WS_LLM_ERROR, "message": "LLM streaming failed"})
     clean_text = strip_markdown_for_voice(full_text)
-    await _safe_send_json(websocket, {"type": "llm_done", "content": clean_text})
+    await _safe_send_json(websocket, {"type": WS_LLM_DONE, "content": clean_text})
     return clean_text
 
 
@@ -236,16 +253,16 @@ async def run_voice_pipeline(
     metadata: AudioPayloadMetadata,
     websocket: WebSocket,
 ) -> None:
-    await _safe_send_json(websocket, {"type": "stt_start"})
+    await _safe_send_json(websocket, {"type": WS_STT_START})
 
     transcript = await stt_provider.transcribe(audio_bytes, _provider_metadata(metadata))
 
-    await _safe_send_json(websocket, {"type": "stt_done", "transcript": transcript})
+    await _safe_send_json(websocket, {"type": WS_STT_DONE, "transcript": transcript})
     if _is_probable_stt_artifact(transcript):
         await _safe_send_json(
             websocket,
             {
-                "type": "error",
+                "type": WS_ERROR,
                 "message": "I only caught a short filler phrase. Please ask again.",
             },
         )
@@ -261,7 +278,7 @@ async def run_voice_pipeline(
     start = asyncio.get_running_loop().time()
     context = await build_context(user_id, transcript)
     elapsed_ms = int((asyncio.get_running_loop().time() - start) * 1000)
-    await _safe_send_json(websocket, {"type": "context_built", "ms": elapsed_ms})
+    await _safe_send_json(websocket, {"type": WS_CONTEXT_BUILT, "ms": elapsed_ms})
     messages = build_messages(user_input=transcript or "", context=context)
     full_text = await stream_chat_response(messages, websocket)
     if full_text:
@@ -293,14 +310,14 @@ async def run_voice_pipeline(
         for i in range(0, len(tts_audio), chunk_size):
             chunk = tts_audio[i : i + chunk_size]
             b64chunk = base64.b64encode(chunk).decode()
-            await _safe_send_json(websocket, {"type": "tts_audio_chunk", "data": b64chunk})
-        await _safe_send_json(websocket, {"type": "tts_audio_done"})
+            await _safe_send_json(websocket, {"type": WS_TTS_AUDIO_CHUNK, "data": b64chunk})
+        await _safe_send_json(websocket, {"type": WS_TTS_AUDIO_DONE})
     except (RuntimeError, ConnectionError):
         logger.debug("WebSocket closed while streaming TTS chunks")
     except Exception as e:
         logger.exception("Unexpected error streaming TTS chunks: %s", str(e))
         b64 = base64.b64encode(tts_audio).decode()
-        await _safe_send_json(websocket, {"type": "tts_audio_base64", "data": b64})
+        await _safe_send_json(websocket, {"type": WS_TTS_AUDIO_BASE64, "data": b64})
 
 
 @router.post("/ai/process")
@@ -392,7 +409,7 @@ async def websocket_voice(
     print('[PIPELINE] ✅ WebSocket connected — client ready to stream audio')
 
     try:
-        await websocket.send_json({"type": "ready"})
+        await websocket.send_json({"type": WS_READY})
 
         while True:
             msg = await websocket.receive()
@@ -406,7 +423,7 @@ async def websocket_voice(
                 if len(audio_buffer) + len(msg["bytes"]) > MAX_AUDIO_BYTES:
                     await _safe_send_json(
                         websocket,
-                        {"type": "error", "message": "Audio too long. Please try a shorter recording."}
+                        {"type": WS_ERROR, "message": "Audio too long. Please try a shorter recording."}
                     )
                     break
                 # Special-case: client can send a single-frame b"__FINAL__" to indicate end-of-utterance
@@ -423,7 +440,7 @@ async def websocket_voice(
 
                 audio_buffer.extend(msg["bytes"])
                 # acknowledge
-                await websocket.send_json({"type": "ack_audio"})
+                await websocket.send_json({"type": WS_ACK_AUDIO})
                 continue
 
             if "text" in msg and msg["text"]:
@@ -434,8 +451,8 @@ async def websocket_voice(
                     # accept it as a final marker. This helps clients that send plain strings.
                     raw = msg.get("text")
                     try:
-                        if raw and isinstance(raw, str) and raw.strip().lower() == "final":
-                            payload = {"type": "final"}
+                        if raw and isinstance(raw, str) and raw.strip().lower() == WS_FINAL:
+                            payload = {"type": WS_FINAL}
                         else:
                             payload = None
                     except (TypeError, AttributeError) as e:
@@ -444,7 +461,7 @@ async def websocket_voice(
 
                 # If the client sends a JSON control frame
                 if payload and isinstance(payload, dict):
-                    if payload.get("type") == "audio_chunk":
+                    if payload.get("type") == WS_AUDIO_CHUNK:
                         data_b64 = payload.get("data")
                         if (
                             payload.get("file_name")
@@ -462,10 +479,10 @@ async def websocket_voice(
                             )
                         if data_b64:
                             audio_buffer.extend(base64.b64decode(data_b64))
-                            await websocket.send_json({"type": "ack_audio"})
+                            await websocket.send_json({"type": WS_ACK_AUDIO})
                         continue
 
-                    if payload.get("type") == "final":
+                    if payload.get("type") == WS_FINAL:
                         if (
                             payload.get("file_name")
                             or payload.get("mime_type")
@@ -492,19 +509,19 @@ async def websocket_voice(
                         continue
 
                 # Unknown text frame; ignore or log
-                await websocket.send_json({"type": "ignored"})
+                await websocket.send_json({"type": WS_IGNORED})
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: %s", user_id)
     except (asyncio.CancelledError, asyncio.TimeoutError) as e:
         logger.info("Voice pipeline cancelled/timeout for user %s: %s", user_id, type(e).__name__)
         try:
-            await websocket.send_json({"type": "error", "message": "Pipeline timeout"})
+            await websocket.send_json({"type": WS_ERROR, "message": "Pipeline timeout"})
         except (RuntimeError, ConnectionError):
             pass
     except Exception as e:
         logger.exception("Error in voice websocket for user %s: %s", user_id, str(e))
         try:
-            await websocket.send_json({"type": "error", "message": "Server error in voice pipeline"})
+            await websocket.send_json({"type": WS_ERROR, "message": "Server error in voice pipeline"})
         except (RuntimeError, ConnectionError):
             pass

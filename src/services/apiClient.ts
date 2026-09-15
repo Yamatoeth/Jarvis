@@ -15,11 +15,17 @@ import {
   TtsVoicesResponseSchema,
   MemorySearchResponseSchema,
   ProcessQueryResponseSchema,
+  OnboardingStartSchema,
+  OnboardingAnswerSchema,
+  OnboardingSummarySchema,
   type HealthResponse,
   type TtsVoicesResponse,
   type MemorySearchResponse,
   type ProcessQueryResponse,
   type StatusResponse,
+  type OnboardingStartResponse,
+  type OnboardingAnswerResponse,
+  type OnboardingSummaryResponse,
 } from './validation'
 
 const API_BASE_URL = getBackendBaseUrl()
@@ -306,6 +312,41 @@ export async function getKnowledge(userId: string) {
   return request<Array<z.infer<typeof KnowledgeItemSchema>>>(
     `/api/v1/kb?user_id=${encodeURIComponent(userId)}`,
     ArraySchema
+  )
+}
+
+/** Start an onboarding session */
+export async function startOnboarding(userId: string): Promise<OnboardingStartResponse> {
+  return request<OnboardingStartResponse>('/api/v1/onboarding/start', OnboardingStartSchema, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  })
+}
+
+/** Submit an answer in an onboarding session */
+export async function submitOnboardingAnswer(
+  userId: string,
+  sessionId: string,
+  answer: string
+): Promise<OnboardingAnswerResponse> {
+  return request<OnboardingAnswerResponse>(
+    `/api/v1/onboarding/${sessionId}/answer`,
+    OnboardingAnswerSchema,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, answer }),
+    }
+  )
+}
+
+/** Get onboarding session summary */
+export async function getOnboardingSummary(
+  userId: string,
+  sessionId: string
+): Promise<OnboardingSummaryResponse> {
+  return request<OnboardingSummaryResponse>(
+    `/api/v1/onboarding/${sessionId}/summary?user_id=${encodeURIComponent(userId)}`,
+    OnboardingSummarySchema
   )
 }
 
