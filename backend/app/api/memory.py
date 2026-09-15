@@ -274,3 +274,35 @@ async def memory_upsert(payload: UpsertRequest):
     except Exception as exc:
         logger.exception("memory_upsert failed: %s", str(exc))
         return UpsertResponse(success=False, added=0, error=str(exc))
+
+
+@router.get("/working/{user_id}")
+async def get_working_memory(user_id: str = Query(...)) -> dict:
+    """Return working memory (Redis) for a user.
+
+    Returns messages, state, and kb_summary from Redis.
+    Used by the frontend contextService to fetch server-side context.
+    """
+    try:
+        messages = await redis_client.get_messages(user_id, limit=20)
+        state = await redis_client.get_user_state(user_id)
+        kb_summary = await redis_client.get_working_memory(user_id, "kb_summary")
+        return {
+            "messages": messages,
+            "state": state,
+            "kb_summary": kb_summary,
+        }
+    except Exception as e:
+        logger.exception("Failed to get working memory for user_id=%s: %s", user_id, e)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve working memory: {e}")
+
+
+@router.delete("/messages/{user_id}")
+async def clear_messages(user_id: str = Query(...)) -> dict:
+    """Clear conversation history (Redis messages) for a user."""
+    try:
+        await redis_client.clear_messages(user_id)
+        return {"status": "cleared", "user_id": user_id}
+    except Exception as e:
+        logger.exception("Failed to clear messages for user_id=%s: %s", user_id, e)
+        raise HTTPException(status_code=500, detail=f"Failed to clear messages: {e}")

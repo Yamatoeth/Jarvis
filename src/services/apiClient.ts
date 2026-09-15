@@ -291,6 +291,24 @@ export async function getWorkingMemory(
   return request<Record<string, unknown>>(`/api/v1/memory/working/${userId}`, WorkingMemorySchema)
 }
 
+/** Get all knowledge base items for a user */
+export async function getKnowledge(userId: string) {
+  const KnowledgeItemSchema = z.object({
+    id: z.string(),
+    domain: z.enum(['identity', 'goals', 'projects', 'finances', 'relationships', 'patterns']),
+    field_name: z.string(),
+    field_value: z.string(),
+    confidence: z.number(),
+    source: z.string(),
+    last_updated: z.string(),
+  })
+  const ArraySchema = z.array(KnowledgeItemSchema)
+  return request<Array<z.infer<typeof KnowledgeItemSchema>>>(
+    `/api/v1/kb?user_id=${encodeURIComponent(userId)}`,
+    ArraySchema
+  )
+}
+
 // ============================================
 // AI Processing
 // ============================================
@@ -326,6 +344,16 @@ export async function getTtsVoices(): Promise<TtsVoicesResponse> {
   return request<TtsVoicesResponse>('/api/v1/tts/voices', TtsVoicesResponseSchema)
 }
 
+/** Clear conversation history (Redis messages) for a user */
+export async function clearMessages(userId: string): Promise<{ status: string; user_id: string }> {
+  return request('/api/v1/memory/messages/' + encodeURIComponent(userId), z.object({
+    status: z.string(),
+    user_id: z.string(),
+  }), {
+    method: 'DELETE',
+  })
+}
+
 export async function get<T>(endpoint: string, schema: z.ZodSchema<T>): Promise<T> {
   return request<T>(endpoint, schema)
 }
@@ -346,19 +374,19 @@ export default {
   getStatus,
   // Users
   getOrCreateUser,
-  // (trust/biometrics removed)
   // Conversations
   createConversation,
   getConversation,
   getConversations,
   sendMessage,
   getMessages,
-  // (interventions removed)
   // Memory
   searchMemory,
   getWorkingMemory,
+  getKnowledge,
+  clearMessages,
   // AI
   processQuery,
   synthesizeSpeech,
   getTtsVoices,
-}
+};

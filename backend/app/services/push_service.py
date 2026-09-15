@@ -73,12 +73,12 @@ async def send_pending_for_user(user_id: str | int, batch_size: int = 50, concur
         if not item:
             break
         try:
-            msg = eval(item) if isinstance(item, str) else item
+            msg = json.loads(item) if isinstance(item, str) else item
             if isinstance(msg, dict):
                 messages.append(msg)
             else:
                 messages.append({'title': 'JARVIS', 'body': str(msg)})
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             messages.append({'title': 'JARVIS', 'body': str(item)})
 
     if not messages:

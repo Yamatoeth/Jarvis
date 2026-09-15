@@ -1,9 +1,10 @@
-import React from 'react'
-import { View, Text, TouchableOpacity, Switch, ScrollView } from 'react-native'
+import React, { useState, useEffect, useCallback } from 'react'
+import { View, Text, TouchableOpacity, Switch, ScrollView, Alert, ActivityIndicator } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../hooks/useTheme'
 import { useSettingsStore } from '../store/settingsStore'
+import apiClient from '../services/apiClient'
 
 interface SettingsSectionProps {
   title: string
@@ -73,10 +74,46 @@ export function SettingsScreen({ onNavigate }: Props) {
   const notificationsEnabled = useSettingsStore((state) => state.settings.notificationsEnabled)
   const hapticFeedbackEnabled = useSettingsStore((state) => state.settings.hapticFeedbackEnabled)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
+  const [clearingMemory, setClearingMemory] = useState(false)
 
   const toggleDarkMode = async (enabled: boolean) => {
     await setThemeMode(enabled ? 'dark' : 'light')
   }
+
+  const handleClearMemory = async () => {
+    if (!userId) {
+      Alert.alert('Error', 'No user ID available')
+      return
+    }
+    Alert.alert(
+      'Clear Working Memory',
+      'This will clear your recent conversation cache on the server. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingMemory(true)
+            try {
+              await apiClient.clearMessages(userId)
+              Alert.alert('Done', 'Conversation cache cleared.')
+            } catch {
+              Alert.alert('Error', 'Failed to clear memory. Check your connection.')
+            } finally {
+              setClearingMemory(false)
+            }
+          },
+        },
+      ]
+    )
+  }
+
+  const handleSyncKnowledge = useCallback(() => {
+    // The Knowledge screen already auto-syncs on mount via getKnowledge.
+    // This is a no-op placeholder — navigating to Knowledge screen refreshes data.
+    Alert.alert('Sync', 'Knowledge base syncs automatically when you open the Knowledge tab.')
+  }, [])
 
   return (
     <SafeAreaView
@@ -162,11 +199,14 @@ export function SettingsScreen({ onNavigate }: Props) {
               icon="trash-outline"
               title="Clear Working Memory"
               subtitle="Clear recent conversation cache"
+              onPress={handleClearMemory}
+              rightElement={clearingMemory ? <ActivityIndicator size="small" color="#00d4ff" /> : null}
             />
             <SettingsItem
               icon="cloud-download-outline"
               title="Sync Knowledge Base"
               subtitle="Update from server"
+              onPress={handleSyncKnowledge}
             />
           </SettingsSection>
 

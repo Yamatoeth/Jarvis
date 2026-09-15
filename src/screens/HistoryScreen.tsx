@@ -1,71 +1,134 @@
-import React from 'react'
-import { View, Text, FlatList, TouchableOpacity } from 'react-native'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../hooks/useTheme'
+import { useSettingsStore } from '../store/settingsStore'
+import apiClient from '../services/apiClient'
 
 interface ConversationHistoryItem {
   id: string
-  timestamp: Date
-  preview: string
-  duration: number
+  user_id: string
+  created_at: string
+  updated_at?: string
 }
 
-const mockHistory: ConversationHistoryItem[] = [
-  {
-    id: '1',
-    timestamp: new Date('2026-04-25T10:30:00'),
-    preview: 'Set a reminder for tomorrow at 9 AM',
-    duration: 32,
-  },
-  {
-    id: '2',
-    timestamp: new Date('2026-04-24T15:45:00'),
-    preview: 'What did I learn about the new project?',
-    duration: 45,
-  },
-  {
-    id: '3',
-    timestamp: new Date('2026-04-23T09:15:00'),
-    preview: 'Tell me about the weekend weather forecast',
-    duration: 28,
-  },
-]
+interface ConversationMessage {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+}
 
 type Props = {
   onNavigate?: () => void
 }
 
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+  return date.toLocaleDateString()
+}
+
+function formatTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatDuration(startStr: string, endStr: string): string {
+  const start = new Date(startStr).getTime()
+  const end = new Date(endStr).getTime()
+  const seconds = Math.floor((end - start) / 1000)
+  if (seconds < 0) return '0:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 export function HistoryScreen({ onNavigate }: Props) {
   const { isDark } = useTheme()
+  const userId = useSettingsStore((s) => s.userId)
+  const [conversations, setConversations] = useState<ConversationHistoryItem[]>([])
+  const [selectedConv, setSelectedConv] = useState<ConversationHistoryItem | null>(null)
+  const [messages, setMessages] = useState<ConversationMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const formatDate = (date: Date) => {
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  useEffect(() => {
+    let active = true
+    async function fetchConversations() {
+      if (!userId) return
+      try {
+        setLoading(true)
+        setError(null)
+        const convs = await apiClient.getConversations(userId)
+        if (active) {
+          setConversations(convs)
+          // Auto-select most recent
+          if (convs.length > 0 && !selectedConv) {
+            setSelectedConv(convs[0])
+          }
+        }
+      } catch (e) {
+        if (active) setError('Failed to load conversation history')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void fetchConversations()
+    return () => { active = false }
+  }, [userId, selectedConv])
 
-    if (days === 0) return 'Today'
-    if (days === 1) return 'Yesterday'
-    if (days < 7) return `${days} days ago`
-    return date.toLocaleDateString()
-  }
+  useEffect(() => {
+    let active = true
+    async function fetchMessages() {
+      if (!selectedConv) return
+      try {
+        setLoadingMessages(true)
+        const msgs = await apiClient.getMessages(selectedConv.id)
+        if (active) setMessages(msgs)
+      } catch {
+        if (active) setMessages([])
+      } finally {
+        if (active) setLoadingMessages(false)
+      }
+    }
+    void fetchMessages()
+    return () => { active = false }
+  }, [selectedConv])
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
+  const conversationTitles = useMemo(() => {
+    // Build a preview from the first user message in each conversation
+    const withPreviews = conversations.map(conv => {
+      const firstUserMsg = messages.find(m => m.conversation_id === conv.id && m.role === 'user')
+      return {
+        ...conv,
+        preview: firstUserMsg?.content?.slice(0, 80) || 'No messages yet',
+      }
+    })
+    return withPreviews
+  }, [conversations, messages])
 
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
+  if (loading) {
+    return (
+      <SafeAreaView className={`flex-1 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#00d4ff" />
+          <Text className="mt-4 text-gray-400">Loading history...</Text>
+        </View>
+      </SafeAreaView>
+    )
   }
 
   return (
-    <SafeAreaView
-      className={`flex-1 ${isDark ? 'bg-gray-900' : 'bg-white'}`}
-    >
+    <SafeAreaView className={`flex-1 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
       <View className="flex-1">
-        {/* Header */}
         <View className="flex-row items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <TouchableOpacity
             onPress={onNavigate}
@@ -73,11 +136,7 @@ export function HistoryScreen({ onNavigate }: Props) {
             accessibilityRole="button"
             accessibilityLabel="Back to assistant"
           >
-            <Ionicons
-              name="arrow-back"
-              size={24}
-              color={isDark ? '#ffffff' : '#000000'}
-            />
+            <Ionicons name="arrow-back" size={24} color={isDark ? '#ffffff' : '#000000'} />
           </TouchableOpacity>
           <Text className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Conversation History
@@ -85,47 +144,67 @@ export function HistoryScreen({ onNavigate }: Props) {
           <View className="w-10" />
         </View>
 
-        {/* History List */}
-        <FlatList
-          data={mockHistory}
-          keyExtractor={(item) => item.id}
-          contentContainerClassName="p-4"
-          accessibilityLabel="Conversation history list"
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              className={`mb-3 p-4 rounded-lg shadow-sm ${
-                isDark
-                  ? 'bg-gray-800 border border-gray-700'
-                  : 'bg-white border border-gray-200'
-              }`}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.preview}. ${formatDate(item.timestamp)} at ${formatTime(item.timestamp)}. Duration ${formatDuration(item.duration)}.`}
-            >
-              <View className="flex-row justify-between items-start mb-2">
-                <Text className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
-                  {formatDate(item.timestamp)}
+        {error ? (
+          <View className="flex-1 items-center justify-center p-8">
+            <Ionicons name="alert-circle-outline" size={48} color={isDark ? '#f87171' : '#ef4444'} />
+            <Text className="mt-4 text-center text-gray-500">{error}</Text>
+            <TouchableOpacity onPress={() => window.location.reload()} className="mt-4">
+              <Text className="text-blue-400">Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <FlatList
+            data={conversationTitles}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => setSelectedConv(item)}
+                className={`mb-3 p-4 rounded-lg shadow-sm ${isDark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'} ${selectedConv?.id === item.id ? (isDark ? 'border-blue-500' : 'border-blue-500') : ''}`}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.preview}. ${formatDate(item.created_at)}`}
+              >
+                <View className="flex-row justify-between items-start mb-2">
+                  <Text className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+                    {formatDate(item.created_at)}
+                  </Text>
+                  <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    {formatTime(item.created_at)}
+                  </Text>
+                </View>
+                <Text className={`text-base ${isDark ? 'text-white' : 'text-gray-900'}`} numberOfLines={2}>
+                  {item.preview}
                 </Text>
-                <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {formatTime(item.timestamp)} • {formatDuration(item.duration)}
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={() => (
+              <View className="flex-1 items-center justify-center p-8">
+                <Ionicons name="time-outline" size={64} color={isDark ? '#4b5563' : '#d1d5db'} />
+                <Text className="text-lg font-semibold mt-4 mb-2 text-gray-400">
+                  No conversation history
+                </Text>
+                <Text className="text-center text-gray-500">
+                  Start talking to JARVIS to see your history here
                 </Text>
               </View>
-              <Text className={`text-base ${isDark ? 'text-white' : 'text-gray-900'}`} numberOfLines={2}>
-                {item.preview}
+            )}
+          />
+        )}
+
+        {selectedConv && messages.length > 0 && (
+          <View className="border-t border-gray-200 dark:border-gray-700">
+            <View className="p-4">
+              <Text className={`text-sm font-semibold ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                Messages ({messages.length})
               </Text>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={() => (
-            <View className="flex-1 items-center justify-center p-8">
-              <Ionicons name="time-outline" size={64} color={isDark ? '#4b5563' : '#d1d5db'} />
-              <Text className={`text-lg font-semibold mt-4 mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                No conversation history
-              </Text>
-              <Text className={`text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                Start talking to JARVIS to see your history here
-              </Text>
+              {messages.slice(0, 20).map((msg) => (
+                <View key={msg.id} className={`my-2 p-3 rounded-lg ${msg.role === 'user' ? (isDark ? 'bg-blue-900/30 text-blue-200' : 'bg-blue-50 text-blue-800') : (isDark ? 'bg-gray-800 text-gray-200' : 'bg-gray-100 text-gray-800')}`}>
+                  <Text className="text-xs font-medium mb-1">{msg.role}</Text>
+                  <Text className="text-sm">{msg.content}</Text>
+                </View>
+              ))}
             </View>
-          )}
-        />
+          </View>
+        )}
       </View>
     </SafeAreaView>
   )

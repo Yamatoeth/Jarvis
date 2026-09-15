@@ -8,7 +8,6 @@ import {
   Animated,
   Easing,
   Dimensions,
-  Switch,
   TextInput,
   ActivityIndicator,
   ScrollView,
@@ -20,8 +19,6 @@ import { getRandomValues } from 'expo-crypto'
 import * as Haptics from 'expo-haptics'
 import { useFonts as useOrbitron, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
 import { useFonts as useRajdhani, Rajdhani_300Light, Rajdhani_500Medium } from '@expo-google-fonts/rajdhani'
-import { useWakeWord } from '../hooks/useWakeWord'
-import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant'
 import apiClient from '../services/apiClient'
 import { useSettingsStore } from '../store/settingsStore'
@@ -109,14 +106,12 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
   const [rajdhaniLoaded] = useRajdhani({ Rajdhani_300Light, Rajdhani_500Medium })
   const fontsLoaded = orbitronLoaded && rajdhaniLoaded
 
-  const [wakeEnabled, setWakeEnabled] = useState(false)
   const [draft, setDraft] = useState('')
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
   const [ttsVoices, setTtsVoices] = useState<string[]>([])
   const toggleRecordingInFlight = useRef(false)
   const backendLastSeenAt = useRef(0)
-  const wake = useWakeWord()
   const userId = useSettingsStore((s) => s.userId)
   const setUser = useSettingsStore((s) => s.setUser)
   const preferredTtsVoice = useSettingsStore((s) => s.settings.preferredTtsVoice)
@@ -145,8 +140,6 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
     playAudio: true,
     onComplete: markBackendConnected,
   })
-
-  const WAKE_KEY = 'wakeEnabled_v1'
 
   useEffect(() => {
     let active = true
@@ -216,77 +209,18 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
   }, [markBackendConnected, preferredTtsVoice, updateSettings])
 
   const onToggleRecording = useCallback(async () => {
-    if (toggleRecordingInFlight.current || isBootstrapping) {
+    if (isBootstrapping || isProcessing) {
       return
     }
 
-    toggleRecordingInFlight.current = true
-    try {
-      if (isListening) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-        void stopListening()
-        return
-      }
-
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    if (isListening) {
+      await stopListening()
+    } else {
       await cancel()
       await startListening()
-    } finally {
-      toggleRecordingInFlight.current = false
     }
-  }, [cancel, isBootstrapping, isListening, startListening, stopListening])
-
-  useEffect(() => {
-    wake.onWake(() => {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-      void startListening()
-      setTimeout(() => {
-        void stopListening()
-      }, 2500)
-    })
-  }, [startListening, stopListening, wake])
-
-  useEffect(() => {
-    let mounted = true
-    async function apply() {
-      if (!mounted) return
-      if (wakeEnabled) {
-        await wake.start()
-      } else {
-        await wake.stop()
-      }
-    }
-    void apply()
-    return () => {
-      mounted = false
-    }
-  }, [wakeEnabled, wake])
-
-  useEffect(() => {
-    let mounted = true
-    async function load() {
-      try {
-        const value = await AsyncStorage.getItem(WAKE_KEY)
-        if (!mounted) return
-        setWakeEnabled(value === '1')
-      } catch {
-        // ignore persisted wake-word read failures
-      }
-    }
-    void load()
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  const toggleWake = useCallback(async (value: boolean) => {
-    try {
-      setWakeEnabled(value)
-      await AsyncStorage.setItem(WAKE_KEY, value ? '1' : '0')
-    } catch {
-      // ignore wake-word persistence write errors
-    }
-  }, [])
+  }, [cancel, isBootstrapping, isListening, isProcessing, startListening, stopListening])
 
   const displayResponse = streamingResponse || response
   const statusLabel = useMemo(() => {
@@ -332,14 +266,6 @@ export default function JarvisVoiceScreen({ onNavigate }: Props) {
       <View style={styles.header}>
         <Text style={styles.logo}>JARVIS</Text>
         <View style={styles.headerRight}>
-          <Switch
-            value={wakeEnabled}
-            onValueChange={toggleWake}
-            trackColor={{ false: '#173947', true: '#00d4ff' }}
-            thumbColor={wakeEnabled ? '#ffffff' : '#f4f3f4'}
-            accessibilityLabel="Enable wake word"
-            accessibilityHint="Listens for the wake word when enabled"
-          />
           <Pressable
             onPress={() => onNavigate?.('profile')}
             style={styles.iconButton}

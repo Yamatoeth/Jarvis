@@ -388,6 +388,7 @@ async def websocket_voice(
     await websocket.accept()
     audio_buffer = bytearray()
     audio_metadata = AudioPayloadMetadata()
+    MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB max audio buffer
     print('[PIPELINE] ✅ WebSocket connected — client ready to stream audio')
 
     try:
@@ -402,6 +403,12 @@ async def websocket_voice(
             # Support binary frames (append) or JSON text frames
             if "bytes" in msg and msg["bytes"]:
                 print(f'[PIPELINE 2/7] 📥 Audio chunk received — size: {len(msg["bytes"])} bytes')
+                if len(audio_buffer) + len(msg["bytes"]) > MAX_AUDIO_BYTES:
+                    await _safe_send_json(
+                        websocket,
+                        {"type": "error", "message": "Audio too long. Please try a shorter recording."}
+                    )
+                    break
                 # Special-case: client can send a single-frame b"__FINAL__" to indicate end-of-utterance
                 if msg["bytes"] == b"__FINAL__":
                     await run_voice_pipeline(

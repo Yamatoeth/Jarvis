@@ -30,11 +30,12 @@ export const UserResponseSchema = z.object({
   id: z.string(),
   email: z.string(),
   fullName: z.string().optional(),
+  full_name: z.string().optional(),
   createdAt: z.string().optional(),
 }).transform((user) => ({
   id: user.id,
   email: user.email,
-  fullName: user.fullName ?? user.id,
+  fullName: user.fullName ?? user.full_name ?? user.id,
   createdAt: user.createdAt ?? new Date(0).toISOString(),
 }))
 export type UserResponse = z.infer<typeof UserResponseSchema>
