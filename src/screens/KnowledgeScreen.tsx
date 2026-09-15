@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, TextInput, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../hooks/useTheme'
 import { useSettingsStore } from '../store/settingsStore'
-import apiClient from '../services/apiClient'
+import apiClient, { updateKnowledgeItem, deleteKnowledgeItem } from '../services/apiClient'
 
 interface KnowledgeItem {
   id: string
@@ -63,6 +63,9 @@ export function KnowledgeScreen({ onNavigate }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedFilter, setSelectedFilter] = useState('All')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   const fetchKnowledge = useCallback(async (resetError = true) => {
     if (!userId) return
@@ -77,6 +80,47 @@ export function KnowledgeScreen({ onNavigate }: Props) {
       setRefreshing(false)
     }
   }, [userId])
+
+  const handleEditStart = (item: KnowledgeItem) => {
+    setEditingId(item.id)
+    setEditValue(item.field_value)
+  }
+
+  const handleEditCancel = () => {
+    setEditingId(null)
+    setEditValue('')
+  }
+
+  const handleEditSave = async () => {
+    if (!editingId || !userId) return
+    try {
+      await updateKnowledgeItem(editingId, userId, { field_value: editValue })
+      setEditingId(null)
+      setEditValue('')
+      await fetchKnowledge()
+    } catch {
+      setError('Failed to update knowledge item')
+    }
+  }
+
+  const handleDeletePress = (item: KnowledgeItem) => {
+    setDeleteConfirmId(item.id)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmId || !userId) return
+    try {
+      await deleteKnowledgeItem(deleteConfirmId, userId)
+      setDeleteConfirmId(null)
+      await fetchKnowledge()
+    } catch {
+      setError('Failed to delete knowledge item')
+    }
+  }
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirmId(null)
+  }
 
   useEffect(() => {
     void fetchKnowledge()
@@ -163,37 +207,110 @@ export function KnowledgeScreen({ onNavigate }: Props) {
             renderItem={({ item }) => {
               const type = mapDomainToType(item.domain)
               const category = mapDomainToCategory(item.domain)
+              const isEditing = editingId === item.id
+              const isDeleteConfirming = deleteConfirmId === item.id
               return (
-                <TouchableOpacity
-                  className={`mb-3 p-4 rounded-lg shadow-sm ${isDark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${item.field_name}. ${type}. ${item.field_value}. Category ${category}.`}
-                >
-                  <View className="flex-row items-start justify-between mb-2">
-                    <View className="flex-row items-center">
-                      <View className={`w-2 h-2 rounded-full ${typeColors[type] || 'bg-gray-500'} mr-2`} />
-                      <Text className={`text-sm font-semibold uppercase tracking-wide ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {type}
+                <View className={`mb-3 p-4 rounded-lg shadow-sm ${isDark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
+                  {isEditing ? (
+                    <View>
+                      <Text className={`text-sm font-semibold uppercase tracking-wide ${isDark ? 'text-gray-300' : 'text-gray-600'} mb-2`}>
+                        Edit {type}
                       </Text>
+                      <TextInput
+                        className={`border rounded px-3 py-2 mb-2 text-base ${isDark ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`}
+                        value={editValue}
+                        onChangeText={setEditValue}
+                        accessibilityLabel={`Edit value for ${item.field_name}`}
+                      />
+                      <View className="flex-row">
+                        <TouchableOpacity
+                          onPress={handleEditSave}
+                          className="mr-2 px-4 py-2 rounded-lg bg-green-600"
+                          accessibilityRole="button"
+                          accessibilityLabel="Save edit"
+                        >
+                          <Text className="text-white text-sm font-medium">Save</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={handleEditCancel}
+                          className="px-4 py-2 rounded-lg bg-gray-500"
+                          accessibilityRole="button"
+                          accessibilityLabel="Cancel edit"
+                        >
+                          <Text className="text-white text-sm font-medium">Cancel</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <Text className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                      {formatDate(item.last_updated)}
-                    </Text>
-                  </View>
-                  <Text className={`text-base font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {item.field_name}
-                  </Text>
-                  <View className="flex-row items-center">
-                    <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {item.field_value}
-                    </Text>
-                    <View className={`ml-auto px-2 py-1 rounded-full ${isDark ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                      <Text className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                        {category}
+                  ) : isDeleteConfirming ? (
+                    <View>
+                      <Text className={`text-sm mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Delete "{item.field_name}"?
                       </Text>
+                      <View className="flex-row">
+                        <TouchableOpacity
+                          onPress={handleDeleteConfirm}
+                          className="mr-2 px-4 py-2 rounded-lg bg-red-600"
+                          accessibilityRole="button"
+                          accessibilityLabel="Confirm delete"
+                        >
+                          <Text className="text-white text-sm font-medium">Delete</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={handleDeleteCancel}
+                          className="px-4 py-2 rounded-lg bg-gray-500"
+                          accessibilityRole="button"
+                          accessibilityLabel="Cancel delete"
+                        >
+                          <Text className="text-white text-sm font-medium">Cancel</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                </TouchableOpacity>
+                  ) : (
+                    <>
+                      <View className="flex-row items-start justify-between mb-2">
+                        <View className="flex-row items-center">
+                          <View className={`w-2 h-2 rounded-full ${typeColors[type] || 'bg-gray-500'} mr-2`} />
+                          <Text className={`text-sm font-semibold uppercase tracking-wide ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+                            {type}
+                          </Text>
+                        </View>
+                        <View className="flex-row items-center">
+                          <Text className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'} mr-3`}>
+                            {formatDate(item.last_updated)}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => handleEditStart(item)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Edit ${item.field_name}`}
+                            className="mr-2"
+                          >
+                            <Ionicons name="create-outline" size={18} color={isDark ? '#60a5fa' : '#2563eb'} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => handleDeletePress(item)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Delete ${item.field_name}`}
+                          >
+                            <Ionicons name="trash-outline" size={18} color={isDark ? '#f87171' : '#dc2626'} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <Text className={`text-base font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {item.field_name}
+                      </Text>
+                      <View className="flex-row items-center">
+                        <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                          {item.field_value}
+                        </Text>
+                        <View className={`ml-auto px-2 py-1 rounded-full ${isDark ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                          <Text className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                            {category}
+                          </Text>
+                        </View>
+                      </View>
+                    </>
+                  )}
+                </View>
               )
             }}
             ListEmptyComponent={() => (

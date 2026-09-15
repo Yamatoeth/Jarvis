@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../hooks/useTheme'
@@ -54,6 +54,7 @@ export function HistoryScreen({ onNavigate }: Props) {
   const { isDark } = useTheme()
   const userId = useSettingsStore((s) => s.userId)
   const [conversations, setConversations] = useState<ConversationHistoryItem[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedConv, setSelectedConv] = useState<ConversationHistoryItem | null>(null)
   const [messages, setMessages] = useState<ConversationMessage[]>([])
   const [loading, setLoading] = useState(true)
@@ -115,6 +116,14 @@ export function HistoryScreen({ onNavigate }: Props) {
     return withPreviews
   }, [conversations, messages])
 
+  const filteredConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversationTitles
+    const q = searchQuery.trim().toLowerCase()
+    return conversationTitles.filter(item =>
+      item.preview.toLowerCase().includes(q),
+    )
+  }, [conversationTitles, searchQuery])
+
   if (loading) {
     return (
       <SafeAreaView className={`flex-1 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
@@ -153,8 +162,18 @@ export function HistoryScreen({ onNavigate }: Props) {
             </TouchableOpacity>
           </View>
         ) : (
-          <FlatList
-            data={conversationTitles}
+          <>
+            <View className={`px-4 pt-3 pb-2 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+              <TextInput
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search conversations..."
+                placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                className={`rounded-lg px-4 py-2 text-sm ${isDark ? 'bg-gray-800 border border-gray-700 text-white' : 'bg-gray-100 border border-gray-200 text-gray-900'}`}
+              />
+            </View>
+            <FlatList
+              data={filteredConversations}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <TouchableOpacity
@@ -187,7 +206,7 @@ export function HistoryScreen({ onNavigate }: Props) {
                 </Text>
               </View>
             )}
-          />
+          </View>
         )}
 
         {selectedConv && messages.length > 0 && (

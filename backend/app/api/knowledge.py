@@ -14,21 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.core.fact_extractor import extract_facts, facts_to_kb_updates
+from app.core.domain_config import MODEL_BY_DOMAIN
 from app.db import models
 from app.db.database import async_session_maker
 
 router = APIRouter()
-
-MODEL_BY_DOMAIN = {
-    "identity": models.KnowledgeIdentity,
-    "goals": models.KnowledgeGoals,
-    "projects": models.KnowledgeProjects,
-    "finances": models.KnowledgeFinances,
-    "relationships": models.KnowledgeRelationships,
-    "patterns": models.KnowledgePatterns,
-}
-
-
 class KBUpdate(BaseModel):
     domain: str
     user_id: str
@@ -182,13 +172,14 @@ async def create_knowledge(payload: dict[str, Any]):
 
 
 @router.put("/kb/{kb_id}")
-async def update_knowledge(kb_id: str, payload: dict[str, Any]):
+async def update_knowledge(kb_id: str, user_id: str = Query(...), payload: dict[str, Any] = Body(...)):
     """Update a KB fact by id."""
-    user_id = str(payload.get("user_id") or "") or None
     async with async_session_maker() as session:
         domain, model_cls, row = await _find_row_by_id(session, kb_id, user_id)
         if row is None or model_cls is None:
             raise HTTPException(status_code=404, detail="KB entry not found")
+        if row.user_id != user_id:
+            raise HTTPException(status_code=403, detail="not authorized")
 
         old_value = row.field_value
         if "field_name" in payload:

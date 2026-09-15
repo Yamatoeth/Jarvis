@@ -58,7 +58,6 @@ IGNORED_TRANSCRIPTS = {
     "thanks",
     "thank you.",
     "thanks.",
-    "you",
 }
 
 

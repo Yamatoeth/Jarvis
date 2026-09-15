@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { View, Text, TouchableOpacity, Switch, ScrollView, Alert, ActivityIndicator } from 'react-native'
+import { View, Text, TouchableOpacity, Switch, ScrollView, Alert, ActivityIndicator, FlatList } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../hooks/useTheme'
 import { useSettingsStore } from '../store/settingsStore'
-import apiClient from '../services/apiClient'
+import apiClient, { getTtsVoices } from '../services/apiClient'
 
 interface SettingsSectionProps {
   title: string
@@ -73,8 +73,29 @@ export function SettingsScreen({ onNavigate }: Props) {
   const userId = useSettingsStore((state) => state.userId)
   const notificationsEnabled = useSettingsStore((state) => state.settings.notificationsEnabled)
   const hapticFeedbackEnabled = useSettingsStore((state) => state.settings.hapticFeedbackEnabled)
+  const preferredTtsVoice = useSettingsStore((state) => state.settings.preferredTtsVoice)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const [clearingMemory, setClearingMemory] = useState(false)
+  const [voices, setVoices] = useState<string[]>([])
+  const [voicesLoading, setVoicesLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchVoices() {
+      try {
+        const resp = await getTtsVoices()
+        setVoices(resp.voices.length > 0 ? resp.voices : [])
+      } catch {
+        setVoices([])
+      } finally {
+        setVoicesLoading(false)
+      }
+    }
+    void fetchVoices()
+  }, [])
+
+  const handleSelectVoice = (voice: string) => {
+    updateSettings({ preferredTtsVoice: voice })
+  }
 
   const toggleDarkMode = async (enabled: boolean) => {
     await setThemeMode(enabled ? 'dark' : 'light')
@@ -179,18 +200,77 @@ export function SettingsScreen({ onNavigate }: Props) {
               }
             />
             <SettingsItem
-              icon="phone-portrait-outline"
-              title="Haptic Feedback"
-              subtitle="Vibrate on voice controls"
-              rightElement={
-                <Switch
-                  value={hapticFeedbackEnabled}
-                  onValueChange={(value) => updateSettings({ hapticFeedbackEnabled: value })}
-                  trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
-                  accessibilityLabel="Haptic feedback"
-                />
-              }
-            />
+                          icon="phone-portrait-outline"
+                          title="Haptic Feedback"
+                          subtitle="Vibrate on voice controls"
+                          rightElement={
+                            <Switch
+                              value={hapticFeedbackEnabled}
+                              onValueChange={(value) => updateSettings({ hapticFeedbackEnabled: value })}
+                              trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                              accessibilityLabel="Haptic feedback"
+                            />
+                          }
+                        />
+                        <View
+                          className={`flex-row items-center p-4 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}
+                        >
+                          <Ionicons
+                            name="construct-outline"
+                            size={24}
+                            color={isDark ? '#9ca3af' : '#6b7280'}
+                            style={{ marginRight: 12 }}
+                          />
+                          <View className="flex-1">
+                            <Text className={`text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              TTS Voice
+                            </Text>
+                            <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                              {voicesLoading
+                                ? 'Loading voices…'
+                                : preferredTtsVoice
+                                  ? preferredTtsVoice
+                                  : 'Default'}
+                            </Text>
+                          </View>
+                          <Ionicons
+                            name="chevron-forward"
+                            size={20}
+                            color={isDark ? '#6b7280' : '#9ca3af'}
+                          />
+                        </View>
+                        {voices.length > 0 && (
+                          <FlatList
+                            data={voices}
+                            keyExtractor={(item) => item}
+                            scrollEnabled={false}
+                            renderItem={({ item }) => (
+                              <TouchableOpacity
+                                className={`flex-row items-center p-4 pl-12 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}
+                                onPress={() => handleSelectVoice(item)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Select voice ${item}`}
+                                accessibilityState={{ selected: preferredTtsVoice === item }}
+                              >
+                                <Text
+                                  className={`flex-1 text-base ${preferredTtsVoice === item ? 'font-bold' : 'font-normal'} ${isDark ? 'text-white' : 'text-gray-900'}`}
+                                >
+                                  {item}
+                                </Text>
+                                {preferredTtsVoice === item ? (
+                                  <Ionicons name="checkmark" size={20} color="#3b82f6" />
+                                ) : null}
+                              </TouchableOpacity>
+                            )}
+                          />
+                        )}
+                        {!voicesLoading && voices.length === 0 ? (
+                          <View className={`flex-row items-center p-4 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+                            <Text className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                              No voices available
+                            </Text>
+                          </View>
+                        ) : null}
           </SettingsSection>
 
           {/* Memory Section */}

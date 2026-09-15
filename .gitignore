@@ -68,3 +68,5 @@ me.json
 _test.db
 .omx/
 .codex
+
+.hermes/

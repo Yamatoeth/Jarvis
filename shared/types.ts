@@ -25,14 +25,7 @@ export interface Conversation {
   created_at: string;
   updated_at?: string;
 }
-
-export type KnowledgeDomain =
-  | 'identity'
-  | 'goals'
-  | 'projects'
-  | 'finances'
-  | 'relationships'
-  | 'patterns';
+import type { KnowledgeDomain } from "../../src/constants";
 
 export interface KnowledgeFact {
   id: string;

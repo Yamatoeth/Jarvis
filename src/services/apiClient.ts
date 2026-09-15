@@ -385,6 +385,21 @@ export async function getTtsVoices(): Promise<TtsVoicesResponse> {
   return request<TtsVoicesResponse>('/api/v1/tts/voices', TtsVoicesResponseSchema)
 }
 
+/** Update a KB fact by id */
+export async function updateKnowledgeItem(kbId: string, userId: string, payload: Record<string, unknown>) {
+  return request(`/api/v1/kb/${kbId}?user_id=${encodeURIComponent(userId)}`, z.any(), {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+/** Delete a KB fact by id */
+export async function deleteKnowledgeItem(kbId: string, userId: string) {
+  return request(`/api/v1/kb/${kbId}?user_id=${encodeURIComponent(userId)}`, z.any(), {
+    method: 'DELETE',
+  })
+}
+
 /** Clear conversation history (Redis messages) for a user */
 export async function clearMessages(userId: string): Promise<{ status: string; user_id: string }> {
   return request('/api/v1/memory/messages/' + encodeURIComponent(userId), z.object({
@@ -425,6 +440,8 @@ export default {
   searchMemory,
   getWorkingMemory,
   getKnowledge,
+  updateKnowledgeItem,
+  deleteKnowledgeItem,
   clearMessages,
   // Onboarding
   startOnboarding,

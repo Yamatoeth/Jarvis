@@ -4,6 +4,16 @@ import { HistoryScreen } from '../screens/HistoryScreen'
 import { KnowledgeScreen } from '../screens/KnowledgeScreen'
 import { SettingsScreen } from '../screens/SettingsScreen'
 
+jest.mock('../services/apiClient', () => ({
+  __esModule: true,
+  default: {
+    getKnowledge: jest.fn(),
+  },
+  getKnowledge: jest.fn(),
+  updateKnowledgeItem: jest.fn(),
+  deleteKnowledgeItem: jest.fn(),
+}))
+
 jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children }: { children: React.ReactNode }) => {
     const { View } = require('react-native')
@@ -70,5 +80,39 @@ describe('new app screens', () => {
     expect(screen.getByLabelText('Dark mode')).toBeTruthy()
     expect(screen.getByLabelText('Push notifications')).toBeTruthy()
     expect(screen.getByLabelText('Haptic feedback')).toBeTruthy()
+  })
+
+  it('enters edit mode when edit button is pressed', () => {
+    const screen = render(<KnowledgeScreen />)
+
+    expect(screen.getByText('Learn Python')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('Edit Learn Python'))
+    expect(screen.getByPlaceholderText('Edit value for Learn Python')).toBeTruthy()
+  })
+
+  it('enters delete confirmation when delete button is pressed', () => {
+    const screen = render(<KnowledgeScreen />)
+
+    expect(screen.getByText('Learn Python')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('Delete Learn Python'))
+    expect(screen.getByText('Delete "Learn Python"?')).toBeTruthy()
+  })
+
+  it('cancels edit mode when cancel is pressed', () => {
+    const screen = render(<KnowledgeScreen />)
+
+    fireEvent.press(screen.getByLabelText('Edit Learn Python'))
+    expect(screen.getByPlaceholderText('Edit value for Learn Python')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('Cancel edit'))
+    expect(screen.queryByPlaceholderText('Edit value for Learn Python')).toBeNull()
+  })
+
+  it('cancels delete confirmation when cancel is pressed', () => {
+    const screen = render(<KnowledgeScreen />)
+
+    fireEvent.press(screen.getByLabelText('Delete Learn Python'))
+    expect(screen.getByText('Delete "Learn Python"?')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('Cancel delete'))
+    expect(screen.queryByText('Delete "Learn Python"?')).toBeNull()
   })
 })

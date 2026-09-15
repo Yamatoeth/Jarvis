@@ -129,41 +129,40 @@ async def _redis_pubsub_generator(user_id: str, request: Request) -> AsyncGenera
         return
 
     redis = await redis_module.get_redis()
+    pubsub = None
     try:
         # aioredis interface
-        try:
-            # use the low-level async client for pubsub
-            pubsub = redis.client.pubsub()
-            channel = f"memory_updates:{user_id}"
-            await pubsub.subscribe(channel)
-            while True:
-                if await _client_disconnected(request):
-                    break
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if message:
-                    data = message.get("data")
-                    if isinstance(data, (bytes, bytearray)):
-                        try:
-                            s = data.decode()
-                        except (UnicodeDecodeError, AttributeError) as e:
-                            logger.debug("Error decoding message: %s", type(e).__name__)
-                            s = str(data)
-                    else:
-                        s = json.dumps(data) if not isinstance(data, str) else data
-                    yield f"data: {s}\n\n"
+        pubsub = redis.client.pubsub()
+        channel = f"memory_updates:{user_id}"
+        await pubsub.subscribe(channel)
+        while True:
+            if await _client_disconnected(request):
+                break
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message:
+                data = message.get("data")
+                if isinstance(data, (bytes, bytearray)):
+                    try:
+                        s = data.decode()
+                    except (UnicodeDecodeError, AttributeError) as e:
+                        logger.debug("Error decoding message: %s", type(e).__name__)
+                        s = str(data)
                 else:
-                    yield ":\n\n"
-                    await asyncio.sleep(0.1)
-        except (asyncio.TimeoutError, ConnectionError) as e:
-            # fallback for other redis clients
-            logger.warning("redis pubsub error: %s", type(e).__name__)
-            for _ in range(3):
-                if await _client_disconnected(request):
-                    return
-                yield "event: heartbeat\ndata: {}\n\n"
-                await asyncio.sleep(1)
-        except Exception as e:
-            logger.exception("Unexpected error in redis pubsub: %s", str(e))
+                    s = json.dumps(data) if not isinstance(data, str) else data
+                yield f"data: {s}\n\n"
+            else:
+                yield ":\n\n"
+                await asyncio.sleep(0.1)
+    except (asyncio.TimeoutError, ConnectionError) as e:
+        # fallback for other redis clients
+        logger.warning("redis pubsub error: %s", type(e).__name__)
+        for _ in range(3):
+            if await _client_disconnected(request):
+                return
+            yield "event: heartbeat\ndata: {}\n\n"
+            await asyncio.sleep(1)
+    except Exception as e:
+        logger.exception("Unexpected error in redis pubsub: %s", str(e))
     finally:
         try:
             await pubsub.unsubscribe(channel)
